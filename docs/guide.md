@@ -255,6 +255,18 @@ há um menu aberto (e o retângulo dele), para a área de cliques crescer enquan
 aparece, e `ui.close_menu()` fecha o menu (o clique fora da camada não chega ao app;
 feche quando o ponteiro sai dela).
 
+### Camada de fundo (área de trabalho)
+
+Com `.desktop("nome")`, o app é uma camada atrás das janelas e na frente do papel de
+parede (os ícones da área de trabalho), que só pega o teclado quando clicada. Um
+diálogo desenhado nela ficaria escondido atrás das janelas: enquanto ele aparece, chame
+`ui.set_raised(true)` (a camada vem para a frente e pega o teclado) e, quando fechar,
+`ui.set_raised(false)`. Pode chamar a cada quadro: só muda quando o valor muda.
+
+```rust
+ui.set_raised(self.dialogo.is_some());
+```
+
 ### Uma camada em cada tela
 
 Com `.on_every_output()` (junto com `.overlay`), a camada cobre todas as telas, e não

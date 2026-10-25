@@ -417,6 +417,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         wanted_size: None,
         compositor,
         hidden: false,
+        raised: false,
         others_drawn: None,
         test_hide: std::env::var_os("MIDE_KIT_TEST_HIDE").map(|_| None),
         every_output: window.every_output && layer_shell_kept.is_some() && !window.desktop && !window.dropdown && !window.corner,
@@ -590,6 +591,8 @@ struct Runner {
     compositor: CompositorState,
     /// A superfície foi escondida (`Ui::set_hidden`): sem imagem até voltar.
     hidden: bool,
+    /// Camada de fundo trazida para a frente (`Ui::set_raised`).
+    raised: bool,
     /// Quando as telas de bloqueio dos outros monitores foram desenhadas, e os tamanhos.
     others_drawn: Option<(std::time::Instant, Vec<(u32, u32)>)>,
     /// Teste de esconder e mostrar (`MIDE_KIT_TEST_HIDE`): quando a janela apareceu.
@@ -789,6 +792,16 @@ impl Runner {
                 self.shell.commit();
             }
             _ => {}
+        }
+        // Camada de fundo para a frente (diálogo da área de trabalho) e de volta.
+        if let Some(raised) = self.ctx.raise_request.take()
+            && let Shell::Layer(layer, _) = &self.shell
+            && raised != self.raised
+        {
+            self.raised = raised;
+            layer.set_layer(if raised { Layer::Overlay } else { Layer::Bottom });
+            layer.set_keyboard_interactivity(if raised { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
+            layer.commit();
         }
         let groups = self.app.menu_bar();
         match &mut self.menus {

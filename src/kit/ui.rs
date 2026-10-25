@@ -541,6 +541,8 @@ pub struct Ctx {
     pub input_region: Option<(f32, f32, f32, f32)>,
     /// Pedido para esconder (`true`) ou mostrar a superfície (`Ui::set_hidden`).
     pub hide_request: Option<bool>,
+    /// Pedido para a camada de fundo subir para a frente das janelas (`Ui::set_raised`).
+    pub raise_request: Option<bool>,
     /// Tela de bloqueio: a senha foi aceita (`Ui::unlock`).
     pub unlock_request: bool,
     /// Desenhando a cópia da tela de bloqueio de outro monitor, ou outra tela de um app
@@ -621,6 +623,7 @@ impl Ctx {
             waker: None,
             input_region: None,
             hide_request: None,
+            raise_request: None,
             unlock_request: false,
             mirror: false,
             screens: Vec::new(),
@@ -2102,6 +2105,13 @@ impl<'a> Ui<'a> {
     /// Esconde a superfície (sem fechar o app) ou mostra de novo.
     pub fn set_hidden(&mut self, hidden: bool) {
         self.ctx.hide_request = Some(hidden);
+    }
+
+    /// Camada de fundo (`Window::desktop`): com `true`, sobe para a frente das janelas
+    /// e pega o teclado (para um diálogo da área de trabalho não abrir escondido atrás
+    /// delas); com `false`, volta para trás. Nas outras janelas não faz nada.
+    pub fn set_raised(&mut self, raised: bool) {
+        self.ctx.raise_request = Some(raised);
     }
 
     /// Para acordar a janela de outra thread (ver [`Waker`](super::Waker)).
