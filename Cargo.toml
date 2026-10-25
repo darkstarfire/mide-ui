@@ -1,0 +1,35 @@
+[package]
+name = "mide-ui"
+version = "0.1.0"
+edition = "2024"
+description = "Framework de apps nativos para Linux (Wayland) no visual do macOS Tahoe, nascido do mide (Mac Inspired Desktop Environment)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/fabioaacarneiro/mide-ui"
+homepage = "https://github.com/fabioaacarneiro/mide-ui"
+readme = "README.md"
+keywords = ["gui", "wayland", "desktop", "mide"]
+categories = ["gui"]
+
+[dependencies]
+chrono = "0.4"
+cosmic-text = "0.19"
+freedesktop-desktop-entry = "0.8"
+freedesktop-icons = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+resvg = { version = "0.45", default-features = false }
+rustix = { version = "1", features = ["pty", "process", "termios", "fs", "time"] }
+smithay-client-toolkit = "0.21"
+tiny-skia = { version = "0.12", features = ["std"] }
+toml_edit = "0.25.17"
+tracing = "0.1.44"
+usvg = { version = "0.45", default-features = false }
+zbus = "5"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+# Log dos exemplos.
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# As dependências (desenho, texto, imagens) otimizadas também em desenvolvimento.
+[profile.dev.package."*"]
+opt-level = 2
