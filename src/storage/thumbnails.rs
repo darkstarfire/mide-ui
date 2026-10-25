@@ -38,13 +38,22 @@ pub fn make(path: &Path, size: u32) -> Option<Pixmap> {
     if meta.len() <= TEXT_LIMIT && crate::files::is_text(path) {
         return text_page(path, size);
     }
-    // AppImage: o gerador do sistema devolve uma folha preta genérica quando não acha o
-    // ícone do app; o ícone de AppImage do tema fica melhor.
-    if extension(path).is_some_and(|e| e == "appimage") {
+    let png = system_thumbnail(path, &meta, if size > 128 { 256 } else { 128 })?;
+    let pix = crate::icons::load_icon_file(&png.to_string_lossy(), size)?;
+    // AppImage sem ícone: o gerador do sistema devolve uma folha genérica em preto e
+    // branco; aí vale o ícone de AppImage do tema. Com o ícone do app (colorido), ele.
+    if extension(path).is_some_and(|e| e == "appimage") && !has_color(&pix) {
         return None;
     }
-    let png = system_thumbnail(path, &meta, if size > 128 { 256 } else { 128 })?;
-    crate::icons::load_icon_file(&png.to_string_lossy(), size)
+    Some(pix)
+}
+
+/// A imagem tem alguma cor (não é só preto, branco e cinza)?
+fn has_color(pix: &Pixmap) -> bool {
+    pix.pixels().iter().filter(|p| p.alpha() > 32).any(|p| {
+        let (r, g, b) = (p.red() as i32, p.green() as i32, p.blue() as i32);
+        (r - g).abs() > 24 || (g - b).abs() > 24 || (r - b).abs() > 24
+    })
 }
 
 fn extension(path: &Path) -> Option<String> {
