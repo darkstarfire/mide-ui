@@ -12,19 +12,26 @@ cor de destaque, escala fracionária, várias telas, camadas (layer-shell).
 
 ## Para funcionar em qualquer desktop
 
-1. **Barra de título própria** quando o compositor não desenha a dele (GNOME e outros
-   sem decoração do servidor): negociar `xdg-decoration` e, sem ela, desenhar luzes,
-   título e arrasto em toda janela, não só nas de conteúdo inteiro.
-2. **Cantos arredondados e sombra pelo app** quando o compositor não arredonda (hoje o
-   mide faz isso por `window_style`).
-3. **Tema e cor de destaque pelo portal** (`org.freedesktop.appearance.color-scheme` e
-   `accent-color` do `xdg-desktop-portal`) fora do mide; dentro dele, a configuração do
-   mide.
-4. **Vidro**: desfoque pelo protocolo do mide quando existir; fora, fundo translúcido
-   sem desfoque (ou `ext-background-effect` onde houver).
-5. **Menus**: na barra superior quando houver o registro de menus (mide, KDE com menu
-   global); senão, menus dentro da janela.
-6. **Ícones**: tema do sistema, com os do mide como reserva.
+Feito (2026-10-25): o framework sabe se está no mide (`control_client::on_mide`;
+`MIDE_UI_STANDALONE=1` força o modo de fora para testar). Fora do mide:
+
+- **barra de título própria** no visual do Tahoe nas janelas comuns (luzes, menus do
+  app dentro dela, título, arrastar e duplo clique para maximizar) — exemplo
+  `examples/janela-comum.rs`;
+- **cantos arredondados pelo app** (12 nas janelas comuns, 24 nas de conteúdo inteiro);
+- **tema e cor de destaque do sistema** pelo portal do freedesktop
+  (`org.freedesktop.appearance`: `color-scheme` e `accent-color`), lidos numa thread
+  (a interface nunca espera);
+- **sem vidro** (ninguém desfoca o fundo): os apps desenham opaco.
+
+Falta:
+
+1. **Sombra** em volta da janela fora do mide (margem transparente + `set_window_geometry`).
+2. **Menus nas janelas de conteúdo inteiro** fora do mide (onde ficam: um botão na
+   barra de ferramentas?) e menus na barra global do KDE quando houver registro.
+3. **Redimensionar pelas bordas** fora do mide (pedir `resize` ao compositor nas bordas).
+4. **Ícones**: tema do sistema, com os do mide como reserva.
+5. Testar de verdade no GNOME, no KDE e no Hyprland.
 
 ## Para a versão 1.0
 
