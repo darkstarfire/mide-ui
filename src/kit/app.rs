@@ -888,11 +888,7 @@ impl Runner {
                 }
             }
             // Menus de contexto ficam por cima de tudo.
-            if let Some(overlay) = self.ctx.take_overlay() {
-                let (alpha, dy) = self.ctx.overlay_look();
-                let paint = tiny_skia::PixmapPaint { opacity: alpha, ..Default::default() };
-                canvas.draw_pixmap(0, crate::ui::draw::px(dy as f32), overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
-            }
+            self.ctx.paint_overlay(&mut canvas);
             // Escolha num menu da barra da janela: os do menu "Janela" são da janela; o
             // resto vai ao app no próximo quadro (como os da barra superior).
             if let Some(action) = window_menu {
@@ -1460,11 +1456,7 @@ impl Runner {
                     app.window_view(id, &mut ui);
                 }
             }
-            if let Some(overlay) = child.ctx.take_overlay() {
-                let (alpha, dy) = child.ctx.overlay_look();
-                let paint = tiny_skia::PixmapPaint { opacity: alpha, ..Default::default() };
-                canvas.draw_pixmap(0, crate::ui::draw::px(dy as f32), overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
-            }
+            child.ctx.paint_overlay(&mut canvas);
             match window_menu.as_deref() {
                 Some(super::menubar::MINIMIZE) => child.xdg.set_minimized(),
                 Some(super::menubar::ZOOM) => {

@@ -612,6 +612,10 @@ pub struct Ctx {
     icon_pending: std::collections::HashSet<String>,
     /// Camada por cima de tudo (menus de contexto) e o tamanho da janela.
     overlay: Option<Pixmap>,
+    /// Painéis de vidro da camada de cima (retângulo na janela, em pontos, e raio): o
+    /// borrão do conteúdo atrás deles é feito em `paint_overlay`, no fim do quadro,
+    /// quando a janela inteira já foi desenhada.
+    frost: Vec<((f32, f32, f32, f32), f32)>,
     pub(crate) window: (u32, u32),
     /// Algum componente está sob o ponteiro neste quadro.
     hover_claimed: bool,
@@ -733,6 +737,7 @@ impl Ctx {
             icon_done: None,
             icon_pending: std::collections::HashSet::new(),
             overlay: None,
+            frost: Vec::new(),
             window: (0, 0),
             hover_claimed: false,
             in_modal: false,
@@ -826,6 +831,7 @@ impl Ctx {
         self.window = saved.window;
         self.screen = saved.screen;
         self.overlay = None;
+        self.frost.clear();
         self.mirror = false;
     }
 
@@ -876,6 +882,29 @@ impl Ctx {
         self.overlay.take()
     }
 
+    /// Fim do quadro: pinta a camada de cima (menus) sobre `canvas`, a imagem da janela
+    /// já completa. Os painéis de vidro ganham antes o borrão do que está atrás deles,
+    /// tirado agora (e não quando o menu foi montado: nesse momento o resto da janela
+    /// ainda não estava desenhado, e dentro de uma área à parte, como a lista do
+    /// Arquivos, a imagem à mão era a da área, com outra origem).
+    pub fn paint_overlay(&mut self, canvas: &mut Pixmap) {
+        let Some(overlay) = self.overlay.take() else {
+            self.frost.clear();
+            return;
+        };
+        let (alpha, dy) = self.overlay_look();
+        let dy_px = crate::ui::draw::px(dy as f32);
+        // Todos os borrões saem da janela sem menu (um submenu não borra o menu).
+        let frosted: Vec<_> = self.frost.drain(..).filter_map(|(rect, radius)| frost_region(canvas, rect).map(|f| (f, rect, radius))).collect();
+        let k = crate::ui::draw::scale();
+        for ((pix, px, py), rect, radius) in frosted {
+            let shifted = (rect.0, rect.1 + dy_px as f32 / k, rect.2, rect.3);
+            paint_pattern_rounded(canvas, &pix, px, py + dy_px, shifted, radius, alpha);
+        }
+        let paint = tiny_skia::PixmapPaint { opacity: alpha, ..Default::default() };
+        canvas.draw_pixmap(0, dy_px, overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
+    }
+
     /// Opacidade e deslocamento vertical da camada de cima (o menu que acabou de abrir
     /// entra esmaecendo e descendo 6 px em 120 ms). Enquanto anima, pede quadros.
     pub fn overlay_look(&mut self) -> (f32, i32) {
@@ -913,6 +942,7 @@ impl Ctx {
         self.memory.menu_drawn = false;
         self.memory.modal_drawn = false;
         self.overlay = None;
+        self.frost.clear();
         if self.input.key(Key::Escape) && self.memory.menu.is_some() {
             self.memory.menu = None;
             self.memory.menu_rect = None;
@@ -1825,16 +1855,19 @@ impl<'a> Ui<'a> {
                 fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, radius + grow, color([0, 0, 0, alpha]));
             }
         }
-        // Vidro: o que está atrás (a janela) desfocado; numa camada transparente (área
-        // de trabalho), o compositor desfoca o que está atrás dela.
-        let frosted = frost_region(self.canvas, rect, radius);
+        // Vidro: o que está atrás (a janela) desfocado, feito no fim do quadro
+        // (`Ctx::paint_overlay`); aqui o painel fica vazado (sem a sombra por baixo)
+        // para o borrão aparecer. Numa camada transparente (área de trabalho), o
+        // compositor desfoca o que está atrás dela.
+        self.ctx.frost.push((rect, radius));
         if self.ctx.glass_enabled() {
             self.ctx.glass_capable = true;
             self.ctx.glass.push((x, y0, w, h, radius));
         }
         let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
-        if let Some((pix, px, py)) = frosted {
-            paint_pattern_rounded(overlay, &pix, px, py, rect, radius);
+        if let Some(path) = crate::ui::draw::rounded_rect(x * k, y0 * k, w * k, h * k, radius * k) {
+            let clear = Paint { blend_mode: tiny_skia::BlendMode::Clear, anti_alias: true, ..Default::default() };
+            overlay.fill_path(&path, &clear, FillRule::Winding, Transform::identity(), None);
         }
         let veil = if t.dark { [40, 40, 44, 175] } else { [248, 248, 250, 165] };
         fill_rounded(overlay, x, y0, w, h, radius, color(veil));
@@ -4924,7 +4957,7 @@ pub fn selection_tone(c: Rgba) -> Rgba {
 /// Copia o pedaço `rect` (em pontos) da tela da janela e desfoca (três passadas de
 /// média, raio de uns 14 pontos), para o vidro de menus e popovers. Devolve a imagem
 /// desfocada e o canto dela, em pixels.
-fn frost_region(canvas: &Pixmap, rect: (f32, f32, f32, f32), _radius: f32) -> Option<(Pixmap, i32, i32)> {
+fn frost_region(canvas: &Pixmap, rect: (f32, f32, f32, f32)) -> Option<(Pixmap, i32, i32)> {
     let k = crate::ui::draw::scale();
     let (cw, ch) = (canvas.width() as i32, canvas.height() as i32);
     let x0 = ((rect.0 * k).floor() as i32).clamp(0, cw);
@@ -4986,13 +5019,13 @@ fn box_blur(buf: &mut [u8], w: usize, h: usize, r: usize, horizontal: bool) {
 }
 
 /// Pinta a imagem `pix` (canto em `px`, `py`, em pixels) recortada no retângulo
-/// arredondado `rect` (em pontos).
-fn paint_pattern_rounded(dst: &mut Pixmap, pix: &Pixmap, px: i32, py: i32, rect: (f32, f32, f32, f32), radius: f32) {
+/// arredondado `rect` (em pontos), com a opacidade `opacity`.
+fn paint_pattern_rounded(dst: &mut Pixmap, pix: &Pixmap, px: i32, py: i32, rect: (f32, f32, f32, f32), radius: f32, opacity: f32) {
     let k = crate::ui::draw::scale();
     let Some(path) = crate::ui::draw::rounded_rect(rect.0 * k, rect.1 * k, rect.2 * k, rect.3 * k, radius * k) else {
         return;
     };
-    let shader = tiny_skia::Pattern::new(pix.as_ref(), tiny_skia::SpreadMode::Pad, tiny_skia::FilterQuality::Nearest, 1.0, Transform::from_translate(px as f32, py as f32));
+    let shader = tiny_skia::Pattern::new(pix.as_ref(), tiny_skia::SpreadMode::Pad, tiny_skia::FilterQuality::Nearest, opacity, Transform::from_translate(px as f32, py as f32));
     let paint = Paint { shader, anti_alias: true, ..Default::default() };
     dst.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
 }
@@ -5330,6 +5363,63 @@ mod tests {
         // O terceiro começa uma contagem nova.
         let third = click(&mut ctx, 10.0, 10.0, |ui| ui.button("Pasta"));
         assert!(!third.double_clicked());
+    }
+
+    #[test]
+    fn vidro_do_menu_borra_o_que_esta_atras_dele_na_janela() {
+        // Menu aberto num item de uma área à parte (como a lista do Arquivos, que fica
+        // abaixo da barra de ferramentas) e uma faixa vermelha desenhada na janela depois
+        // do menu: o borrão atrás do menu é o da janela pronta, na mesma altura.
+        let mut ctx = Ctx::new(Theme::default());
+        let band = std::cell::Cell::new(None::<(f32, f32, f32, f32)>);
+        let view = |ui: &mut Ui| {
+            ui.custom(100.0, |_, _| {});
+            let mut origin = (0.0, 0.0);
+            ui.scroll_area(150.0, |ui| {
+                let r = ui.button("item");
+                origin = (ui.offset.0 + r.rect.0 + 5.0, ui.offset.1 + r.rect.1 + 5.0);
+                ui.context_menu(&r, |m| {
+                    m.item("Abrir");
+                    m.item("Duplicar");
+                });
+            });
+            ui.paint(|canvas, _| {
+                canvas.fill(color([255, 255, 255, 255]));
+                if let Some((x, y, w, h)) = band.get() {
+                    fill_rounded(canvas, x, y, w, h, 0.0, color([255, 0, 0, 255]));
+                }
+            });
+            origin
+        };
+        let origin = frame(&mut ctx, view);
+        ctx.input.pointer = Some(origin);
+        ctx.input.secondary = true;
+        frame(&mut ctx, view);
+        ctx.input.secondary = false;
+        frame(&mut ctx, view);
+        let (mx, my, mw, mh) = ctx.memory.menu_rect.expect("menu aberto");
+        band.set(Some((0.0, my + mh / 2.0 - 10.0, 400.0, 20.0)));
+        // Já aberto, sem a animação de entrada (opacidade 1, sem deslocamento).
+        if let Some(m) = ctx.memory.menu.as_mut() {
+            m.opened = None;
+        }
+        let mut canvas = Pixmap::new(400, 300).unwrap();
+        ctx.begin_frame();
+        view(&mut Ui::root(&mut canvas, &mut ctx));
+        ctx.paint_overlay(&mut canvas);
+        ctx.end_frame();
+        let px = |y: f32| {
+            let p = canvas.pixel((mx + mw / 2.0) as u32, y as u32).unwrap();
+            (p.red() as i32, p.green() as i32)
+        };
+        let (r, g) = px(my + mh / 2.0);
+        assert!(r - g > 40, "borrão vermelho atrás do menu, na altura da faixa ({r}, {g})");
+        // Acima da faixa, perto dela, o borrão espalha um pouco de vermelho (sem
+        // vidro seria branco).
+        let (r, g) = px(my + mh / 2.0 - 15.0);
+        assert!(r - g > 4, "borrão espalha a faixa ({r}, {g})");
+        let (r, g) = px(my + 2.0);
+        assert!(r - g < 25, "longe da faixa, sem vermelho ({r}, {g})");
     }
 
     #[test]
