@@ -1,4 +1,14 @@
-//! Ícones de apps do tema do sistema, prontos para desenhar com tiny-skia.
+//! Ícones prontos para desenhar com tiny-skia: os símbolos da interface embutidos no
+//! mide-ui ([`SYMBOLS`]), o tema do mide (`mide-icons`) e, só como reserva, o tema do
+//! sistema.
+//!
+//! Ordem da busca (`load_themed_icon`, usado por `ui.icon`, `icon_button`...):
+//! 1. símbolo embutido do kit, para os nomes de [`SYMBOLS`] (os mesmos em qualquer
+//!    desktop: abrir arquivo é um documento e abrir pasta é uma pasta, mesmo onde o
+//!    tema desenha os dois iguais);
+//! 2. `MIDE_ICON_THEME` (testes) e o tema do mide, quando instalado;
+//! 3. o tema do sistema (gsettings) e o Adwaita, só como reserva;
+//! 4. o `hicolor`.
 
 use std::{fs, path::Path};
 
@@ -122,6 +132,9 @@ pub fn load_themed_icon(names: &[&str], size: u32) -> Option<Pixmap> {
     if let Some(file) = names.first().filter(|n| n.starts_with('/')) {
         return load_icon_file(file, size).or_else(|| load_themed_icon(&names[1..], size));
     }
+    if let Some(icon) = names.iter().find_map(|n| symbol(n, size)) {
+        return Some(icon);
+    }
     themed(names, size).or_else(|| names.iter().find_map(|n| load_icon_hicolor(n, size)))
 }
 
@@ -203,15 +216,54 @@ fn icon_from_png(path: &Path, size: u32) -> Option<Pixmap> {
     Some(pixmap)
 }
 
+/// Símbolos da interface desenhados no próprio mide-ui (desenho nosso, traço de 1,3
+/// num quadro de 16): usados no lugar do tema para que os apps do mide tenham sempre os
+/// mesmos símbolos. Ficam pretos; os componentes pintam na cor do texto (`-symbolic`).
+pub const SYMBOLS: &[(&str, &str)] = &[
+    // Abrir arquivo: um documento (com a dobra no canto e duas linhas de texto).
+    ("document-open-symbolic", r##"<path d="M3.5 1.5h6l3 3v10h-9z" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.5 1.5v3h3" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.8 8.5h4.4M5.8 11h4.4" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>"##),
+    // Novo documento: o documento com um "+".
+    ("document-new-symbolic", r##"<path d="M3.5 1.5h6l3 3v10h-9z" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.5 1.5v3h3" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7.2v5M5.5 9.7h5" stroke="#000" stroke-width="1.3" stroke-linecap="round"/>"##),
+    // Salvar: seta descendo para a bandeja.
+    ("document-save-symbolic", r##"<path d="M8 1.5v8.5M4.6 6.8 8 10.2l3.4-3.4" fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M1.8 10.2v2.8a1.5 1.5 0 0 0 1.5 1.5h9.4a1.5 1.5 0 0 0 1.5-1.5v-2.8" fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>"##),
+    // Abrir pasta: a pasta.
+    ("folder-open-symbolic", r##"<path d="M1.5 4a1.2 1.2 0 0 1 1.2-1.2h3.4l1.6 1.6h5.6a1.2 1.2 0 0 1 1.2 1.2v6.9a1.2 1.2 0 0 1-1.2 1.2H2.7a1.2 1.2 0 0 1-1.2-1.2z" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/><path d="M1.5 6.6h13" stroke="#000" stroke-width="1.2"/>"##),
+    // Buscar: lupa.
+    ("edit-find-symbolic", r##"<circle cx="6.6" cy="6.6" r="4.6" fill="none" stroke="#000" stroke-width="1.5"/><path d="m10 10 4.3 4.3" stroke="#000" stroke-width="1.7" stroke-linecap="round"/>"##),
+    // Preferências: engrenagem de oito dentes.
+    ("preferences-system-symbolic", r##"<circle cx="8" cy="8" r="5.6" fill="none" stroke="#000" stroke-width="2.6" stroke-dasharray="2.2 2.2"/><circle cx="8" cy="8" r="3.7" fill="none" stroke="#000" stroke-width="2"/>"##),
+    // Mostrar a barra lateral: janela com a coluna da esquerda.
+    ("view-sidebar-start-symbolic", r##"<rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="#000" stroke-width="1.3"/><path d="M6 2.5v11" stroke="#000" stroke-width="1.3"/><path d="M3.3 5.2h1.2M3.3 7.2h1.2M3.3 9.2h1.2" stroke="#000" stroke-width="1.1" stroke-linecap="round"/>"##),
+    // Mostrar o painel de baixo (terminal integrado).
+    ("view-dual-symbolic", r##"<rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="#000" stroke-width="1.3"/><path d="M1.5 9.5h13" stroke="#000" stroke-width="1.3"/>"##),
+    // Terminal: janela com o prompt.
+    ("utilities-terminal-symbolic", r##"<rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="#000" stroke-width="1.3"/><path d="m4.3 6.2 2.2 1.8-2.2 1.8M8 10.6h3.5" fill="none" stroke="#000" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>"##),
+    // Adicionar.
+    ("list-add-symbolic", r##"<path d="M8 2.5v11M2.5 8h11" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>"##),
+    // Fechar.
+    ("window-close-symbolic", r##"<path d="m3.5 3.5 9 9m0-9-9 9" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>"##),
+];
+
+/// Símbolo embutido pelo nome (ver [`SYMBOLS`]), no tamanho pedido.
+pub fn symbol(name: &str, size: u32) -> Option<Pixmap> {
+    let (_, body) = SYMBOLS.iter().find(|(n, _)| *n == name)?;
+    let svg = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">{body}</svg>"#);
+    svg_to_icon(svg.as_bytes(), size)
+}
+
 /// Renderiza o SVG com a parte visível ajustada ao tamanho do ícone. Primeiro
 /// renderiza grande para achar a parte visível, depois renderiza de novo direto no
 /// tamanho final (fica nítido). O resvg usa a própria cópia do tiny-skia; só os
 /// bytes premultiplicados são copiados, então as versões não precisam bater.
 fn icon_from_svg(path: &Path, size: u32) -> Option<Pixmap> {
+    svg_to_icon(&fs::read(path).ok()?, size)
+}
+
+/// Como `icon_from_svg`, a partir dos bytes do SVG.
+fn svg_to_icon(data: &[u8], size: u32) -> Option<Pixmap> {
     // Grande o bastante para medir a margem com precisão, sem pesar.
     let probe_size = size * 2;
-    let data = fs::read(path).ok()?;
-    let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default()).ok()?;
+    let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default()).ok()?;
     let svg_size = tree.size();
     let s0 = probe_size as f32 / svg_size.width().max(svg_size.height());
     let mut probe = resvg::tiny_skia::Pixmap::new(probe_size, probe_size)?;
@@ -232,6 +284,18 @@ fn icon_from_svg(path: &Path, size: u32) -> Option<Pixmap> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simbolos_embutidos_desenham() {
+        for (name, _) in SYMBOLS {
+            let icon = symbol(name, 16).unwrap_or_else(|| panic!("{name} não desenhou"));
+            assert!(icon.data().chunks(4).any(|p| p[3] > 0), "{name} vazio");
+        }
+        // Abrir arquivo e abrir pasta são desenhos diferentes (o pedido do E11).
+        assert_ne!(symbol("document-open-symbolic", 16).unwrap().data(), symbol("folder-open-symbolic", 16).unwrap().data());
+        // O símbolo embutido vale antes de qualquer tema.
+        assert_eq!(load_themed_icon(&["document-open-symbolic"], 16).unwrap().data(), symbol("document-open-symbolic", 16).unwrap().data());
+    }
 
     /// Bancada: `cargo test --lib bancada_icones -- --ignored --nocapture`.
     #[test]
