@@ -523,8 +523,8 @@ pub fn open(target: &str) {
     let chosen_other = |mime: &str, ours: &str| crate::default_apps::user_choice(mime).is_some_and(|id| id != ours);
     let native = if target.starts_with("trash:") || (path.is_dir() && !chosen_other("inode/directory", "mide-files.desktop")) {
         Some(("mide-files", "Arquivos"))
-    } else if crate::files::is_text(path) && !chosen_other("text/plain", "mide-text.desktop") {
-        Some(("mide-text", "Editor de Texto"))
+    } else if crate::files::is_text(path) && !chosen_other("text/plain", "mide-code.desktop") {
+        Some(("mide-code", "Code"))
     } else {
         None
     };

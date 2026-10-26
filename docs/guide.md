@@ -515,3 +515,12 @@ O azul da seleção é o tom mais forte da cor de destaque (`selection_tone`).
 `Window::accepts_files()` faz a janela aceitar arquivos arrastados de outros apps: o
 compositor mostra o ponteiro de "copiar" sobre ela e os caminhos chegam em
 `input().dropped`. Janelas sem isso deixam o arrasto passar (a seta comum).
+
+
+## Editor de código
+
+`TextAreaLook` tem `current_line` (destacar a linha do cursor) e `indent` (o que a tecla
+Tab insere: espaços ou `\t`). `ui.set_mono_font(Some("JetBrains Mono"))` troca a fonte
+de largura fixa da janela e `ui.mono_fonts()` lista as instaladas. `ui.take_key(Key::Down)`
+tira uma tecla do quadro antes dos componentes seguintes (um popup de completar usa as
+setas antes da área de texto).

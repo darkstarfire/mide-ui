@@ -83,11 +83,15 @@ pub struct TextAreaLook<'a> {
     /// Cores, sublinhados e texto no fim das linhas: chamado a cada quadro, depois das
     /// teclas do quadro e antes do desenho (o resultado nunca atrasa um quadro).
     pub decorate: Option<&'a mut dyn FnMut(&super::textarea::TextDoc) -> super::textarea::Decorations>,
+    /// Destaca a linha do cursor (com a área em foco).
+    pub current_line: bool,
+    /// O que a tecla Tab insere (recuo do editor: espaços ou `\t`).
+    pub indent: &'a str,
 }
 
 impl Default for TextAreaLook<'_> {
     fn default() -> Self {
-        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None }
+        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None, current_line: true, indent: "    " }
     }
 }
 
@@ -2263,6 +2267,32 @@ impl<'a> Ui<'a> {
         self.ctx.hide_request = Some(hidden);
     }
 
+    /// Tira a tecla `key` deste quadro (se foi apertada) e diz se estava lá: os
+    /// componentes desenhados depois não a veem (um popup de completar usa ↑/↓/Enter
+    /// antes da área de texto).
+    pub fn take_key(&mut self, key: super::input::Key) -> bool {
+        let input = &mut self.ctx.input;
+        let Some(i) = input.keys.iter().position(|k| *k == key) else {
+            return false;
+        };
+        input.keys.remove(i);
+        if i < input.key_mods.len() {
+            input.key_mods.remove(i);
+        }
+        true
+    }
+
+    /// Famílias de fonte de largura fixa instaladas (para escolher a do editor).
+    pub fn mono_fonts(&mut self) -> Vec<String> {
+        self.ctx.text.monospace_families()
+    }
+
+    /// Fonte de largura fixa (áreas de texto, código): o nome de uma família instalada,
+    /// ou `None` para a do sistema. Vale para a janela toda.
+    pub fn set_mono_font(&mut self, family: Option<&str>) {
+        self.ctx.text.set_mono_family(family);
+    }
+
     /// Antes de uma linha de lista escolhida (`tree_row`, `list_row`): a de cima
     /// (`above`) e a de baixo (`below`) também estão escolhidas. As linhas seguidas
     /// viram um bloco só, com os cantos arredondados só em cima da primeira e embaixo
@@ -3288,7 +3318,7 @@ impl<'a> Ui<'a> {
                 };
                 match key {
                     Key::Enter => doc.newline(),
-                    Key::Tab => doc.type_text("    "),
+                    Key::Tab => doc.type_text(look.indent),
                     Key::Backspace | Key::Delete => {
                         let mut probe = (doc.text.clone(), doc.edit);
                         let deleted = if key == Key::Backspace { probe.1.backspace(&mut probe.0, ctrl) } else { probe.1.delete(&mut probe.0, ctrl) };
@@ -3438,7 +3468,7 @@ impl<'a> Ui<'a> {
             let y = pad + line as f32 * line_h - doc.scroll;
             let x0 = -doc.scroll_x;
             let trailing = has_trailing(line);
-            if focused && line == cursor_line && selection.is_none() {
+            if look.current_line && focused && line == cursor_line && selection.is_none() {
                 fill_rounded(&mut clip, 0.0, y, w as f32, line_h, 0.0, color([ar, ag, ab, 14]));
             }
             if let Some((a, b)) = selection.filter(|(a, b)| *a <= end && *b >= start && !(a == b)) {

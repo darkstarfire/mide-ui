@@ -206,7 +206,7 @@ fn write_defaults(path: &Path, mimes: &[&str], desktop_id: &str) -> std::io::Res
 
 /// Apps do mide que são o padrão da sessão: pastas no Arquivos e textos no Editor de
 /// Texto. Imagens, compactados e outros entram quando o mide tiver o app (B23, E4).
-pub const SESSION_DEFAULTS: &[(&str, &str)] = &[("files", "mide-files.desktop"), ("text", "mide-text.desktop"), ("documents", "mide-text.desktop"), ("video", "mide-player.desktop")];
+pub const SESSION_DEFAULTS: &[(&str, &str)] = &[("files", "mide-files.desktop"), ("text", "mide-code.desktop"), ("documents", "mide-writer.desktop"), ("video", "mide-player.desktop")];
 
 /// Na sessão do mide: grava no `mide-mimeapps.list` os apps do mide para os tipos que
 /// ainda não têm escolha nele (uma escolha feita nas Configurações nunca é trocada).
@@ -389,7 +389,7 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert_eq!(default_in_text(&text, "inode/directory").as_deref(), Some("org.kde.dolphin.desktop"));
         assert_eq!(default_in_text(&text, "text/markdown").as_deref(), Some("x.desktop"));
-        assert_eq!(default_in_text(&text, "text/plain").as_deref(), Some("mide-text.desktop"));
+        assert_eq!(default_in_text(&text, "text/plain").as_deref(), Some("mide-code.desktop"));
         // Segunda vez: nada muda.
         assert!(ensure_defaults_in(&path).unwrap().is_empty());
         // Arquivo novo: pastas e textos com os apps do mide.
@@ -406,12 +406,12 @@ mod tests {
         let text = "# meu arquivo\n[Added Associations]\ntext/plain=gedit.desktop;\n\n[Default Applications]\ntext/plain=gedit.desktop\nimage/png=eog.desktop\n";
         assert_eq!(default_in_text(text, "text/plain").as_deref(), Some("gedit.desktop"));
         assert_eq!(default_in_text(text, "video/mp4"), None);
-        let out = set_in_text(text, &["text/plain", "text/markdown"], "mide-text.desktop");
+        let out = set_in_text(text, &["text/plain", "text/markdown"], "mide-code.desktop");
         assert!(out.contains("# meu arquivo"));
         // A associação extra (outra seção) fica como estava.
         assert!(out.contains("[Added Associations]\ntext/plain=gedit.desktop;"));
-        assert_eq!(default_in_text(&out, "text/plain").as_deref(), Some("mide-text.desktop"));
-        assert_eq!(default_in_text(&out, "text/markdown").as_deref(), Some("mide-text.desktop"));
+        assert_eq!(default_in_text(&out, "text/plain").as_deref(), Some("mide-code.desktop"));
+        assert_eq!(default_in_text(&out, "text/markdown").as_deref(), Some("mide-code.desktop"));
         assert_eq!(default_in_text(&out, "image/png").as_deref(), Some("eog.desktop"));
         // Arquivo novo: cria a seção.
         let fresh = set_in_text("", &["inode/directory"], "mide-files.desktop");

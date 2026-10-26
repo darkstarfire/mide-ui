@@ -34,7 +34,8 @@ pub fn load_icon(name: &str, size: u32) -> Option<Pixmap> {
 pub fn generic_name(name: &str) -> Option<&'static str> {
     Some(match name {
         "mide-terminal" => "utilities-terminal",
-        "mide-text" => "accessories-text-editor",
+        "mide-text" | "mide-code" => "accessories-text-editor",
+        "mide-writer" => "x-office-document",
         "mide-files" => "system-file-manager",
         "mide-settings" => "preferences-system",
         "mide-screenshot" | "mide-screenshot-editor" => "applets-screenshooter",
