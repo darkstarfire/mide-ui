@@ -20,7 +20,7 @@ use std::{
 
 const RATE: u32 = 48_000;
 /// Muda quando um som muda: o tema é refeito.
-const VERSION: &str = "4";
+const VERSION: &str = "5";
 
 /// Sons de alerta oferecidos: chave, nome na tela.
 pub const ALERTS: &[(&str, &str)] = &[("vidro", "Vidro"), ("gota", "Gota"), ("sino", "Sino"), ("pop", "Pop")];
@@ -255,7 +255,8 @@ pub fn synth(name: &str) -> Wave {
         // Papel amassado caindo na Lixeira.
         // Esvaziar: papel amassado mais longo e a queda no fundo da lixeira.
         // Esvaziar: o sopro e um baque macio no fim (sem estalo).
-        "trash-empty" => mix(whoosh(0.5, 0.45, 5), &note(110.0, 0.3, 14.0, 0.22), 0.38),
+        // Esvaziar a Lixeira e apagar para sempre: o mesmo som de mandar para ela.
+        "trash-empty" => whoosh(0.32, 0.4, 17),
         // Mover para a Lixeira: papel amassado curto.
         "trash-move" => whoosh(0.32, 0.4, 17),
         "bell" | "dialog-warning" => alert(&alert_key()),

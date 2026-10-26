@@ -444,6 +444,9 @@ pub struct Memory {
     drag_area_press: Option<std::time::Instant>,
     /// Dica (`Ui::tooltip`): componente sob o ponteiro e desde quando.
     tooltip_hover: Option<(u64, std::time::Instant)>,
+    /// Divisória do cabeçalho sendo arrastada: coluna, x onde começou e as larguras
+    /// da vizinha da esquerda e da coluna nesse momento.
+    header_drag: Option<(usize, f32, f32, f32)>,
     /// Controles segmentados: opção mostrada e, se a pílula está deslizando, de onde
     /// ela saiu e quando.
     segments: HashMap<u64, (usize, Option<(usize, std::time::Instant)>)>,
@@ -3458,22 +3461,132 @@ impl<'a> Ui<'a> {
                 }
             }
         }
+        // Nome em até duas linhas (quebrando nas palavras), como no Finder; o que não
+        // cabe termina em reticências. Escolhido, o nome aparece inteiro, por cima dos
+        // vizinhos; com o ponteiro em cima, uma dica mostra o nome completo.
         let max = w - 6.0;
-        let shown = self.fit(label, t.font_small, FontWeight::Regular, max);
-        let lw = self.measure(&shown, t.font_small, FontWeight::Regular);
-        let (lx, ly) = (rect.0 + (w - lw) / 2.0, iy + fh + 10.0);
-        if selected {
-            let h = t.font_small * 1.4;
-            fill_rounded(self.canvas, lx - 6.0, ly - 1.0, lw + 12.0, h, h / 2.0, color(self.selection_fill()));
-        }
+        let lines = self.wrap_label(label, t.font_small, max);
+        let cut = lines.len() > 2;
+        let shown: Vec<String> = if cut && !selected {
+            let rest = lines[1..].join(" ");
+            vec![lines[0].clone(), self.fit_middle(&rest, t.font_small, max)]
+        } else {
+            lines.into_iter().take(8).collect()
+        };
+        let lh = (t.font_small * 1.3).round();
+        let ly = iy + fh + 10.0;
         let c = if selected && self.ctx.input.window_active() { t.on_accent } else { t.tile_text };
-        // Nome claro (sobre o papel de parede): sombra escura embaixo para ler bem.
         let light = (t.tile_text[0] as u32 + t.tile_text[1] as u32 + t.tile_text[2] as u32) > 600;
-        if light && !selected {
-            self.draw_text(&shown, lx, ly + 1.0, t.font_small, FontWeight::Regular, [0, 0, 0, 160]);
+        let widths: Vec<f32> = shown.iter().map(|l| self.measure(l, t.font_small, FontWeight::Regular)).collect();
+        let lw = widths.iter().cloned().fold(0.0, f32::max);
+        let block = (rect.0 + (w - lw) / 2.0 - 6.0, ly - 1.0, lw + 12.0, shown.len() as f32 * lh + 2.0);
+        let radius = (block.3 / 2.0).min(8.0);
+        let fill = self.selection_fill();
+        // Mais de duas linhas (escolhido): na camada de cima, para não ficar embaixo
+        // dos ícones vizinhos.
+        if selected && shown.len() > 2 {
+            let (ox, oy) = self.offset;
+            let k = crate::ui::draw::scale();
+            let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
+            let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
+            fill_rounded(overlay, ox + block.0, oy + block.1, block.2, block.3, radius, color(fill));
+            for (i, line) in shown.iter().enumerate() {
+                let lx = rect.0 + (w - widths[i]) / 2.0;
+                self.ctx.text.draw(overlay, line, ox + lx, oy + ly + i as f32 * lh, t.font_small, FontWeight::Regular, c);
+            }
+            return r;
         }
-        self.draw_text(&shown, lx, ly, t.font_small, FontWeight::Regular, c);
+        if selected {
+            fill_rounded(self.canvas, block.0, block.1, block.2, block.3, radius, color(fill));
+        }
+        for (i, line) in shown.iter().enumerate() {
+            let lx = rect.0 + (w - widths[i]) / 2.0;
+            let y = ly + i as f32 * lh;
+            // Nome claro (sobre o papel de parede): sombra escura embaixo para ler bem.
+            if light && !selected {
+                self.draw_text(line, lx, y + 1.0, t.font_small, FontWeight::Regular, [0, 0, 0, 160]);
+            }
+            self.draw_text(line, lx, y, t.font_small, FontWeight::Regular, c);
+        }
+        if cut && !selected {
+            self.tooltip(&r, label);
+        }
         r
+    }
+
+    /// Corta o texto no meio com reticências, guardando o fim (a extensão do arquivo
+    /// continua à vista), como o Finder: "Contrato de pr…nado.pdf".
+    fn fit_middle(&mut self, s: &str, size: f32, max: f32) -> String {
+        if self.measure(s, size, FontWeight::Regular) <= max {
+            return s.to_string();
+        }
+        let chars: Vec<char> = s.chars().collect();
+        // Fim guardado: o que cabe em uns 45% da linha (pelo menos a extensão).
+        let ext = s.rfind('.').map(|i| s[i..].chars().count()).unwrap_or(0);
+        let mut tail_n = ext.min(chars.len().saturating_sub(1));
+        while tail_n + 1 < chars.len() {
+            let next: String = chars[chars.len() - tail_n - 1..].iter().collect();
+            if self.measure(&next, size, FontWeight::Regular) > max * 0.45 {
+                break;
+            }
+            tail_n += 1;
+        }
+        let tail: String = chars[chars.len() - tail_n..].iter().collect::<String>().trim_start().to_string();
+        let mut head_n = chars.len() - tail_n;
+        while head_n > 0 {
+            let candidate = format!("{}…{}", chars[..head_n].iter().collect::<String>().trim_end(), tail);
+            if self.measure(&candidate, size, FontWeight::Regular) <= max {
+                return candidate;
+            }
+            head_n -= 1;
+        }
+        self.fit(s, size, FontWeight::Regular, max)
+    }
+
+    /// Quebra um nome em linhas de até `max` pontos, nas palavras (e também em `-` e
+    /// `_`); uma palavra maior que a linha é cortada nas letras.
+    fn wrap_label(&mut self, label: &str, size: f32, max: f32) -> Vec<String> {
+        let mut pieces: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for ch in label.chars() {
+            cur.push(ch);
+            if ch == ' ' || ch == '-' || ch == '_' {
+                pieces.push(std::mem::take(&mut cur));
+            }
+        }
+        if !cur.is_empty() {
+            pieces.push(cur);
+        }
+        let mut lines: Vec<String> = Vec::new();
+        let mut line = String::new();
+        for piece in pieces {
+            let candidate = format!("{line}{piece}");
+            if self.measure(candidate.trim_end(), size, FontWeight::Regular) <= max {
+                line = candidate;
+                continue;
+            }
+            if !line.is_empty() {
+                lines.push(line.trim_end().to_string());
+                line = String::new();
+            }
+            // Peça maior que a linha: corta nas letras.
+            for ch in piece.chars() {
+                let candidate = format!("{line}{ch}");
+                if !line.is_empty() && self.measure(candidate.trim_end(), size, FontWeight::Regular) > max {
+                    lines.push(line.trim_end().to_string());
+                    line = ch.to_string();
+                } else {
+                    line = candidate;
+                }
+            }
+        }
+        if !line.trim().is_empty() {
+            lines.push(line.trim_end().to_string());
+        }
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines
     }
 
     /// Monta componentes num lugar escolhido (`x`, `y`) desta área, com `width` de
@@ -3542,6 +3655,9 @@ impl<'a> Ui<'a> {
             }
             let lx = if i == 0 { x + 36.0 } else { x };
             let weight = if sorted.0 == i { FontWeight::Semibold } else { FontWeight::Regular };
+            // Coluna estreita: o título termina em reticências (sem invadir a vizinha).
+            let room = (x + w - lx - if sorted.0 == i { 22.0 } else { 8.0 }).max(0.0);
+            let label = &self.fit(label, t.font_small, weight, room);
             self.draw_text(label, lx, rect.1 + (24.0 - t.font_small * 1.25) / 2.0, t.font_small, weight, t.text_secondary);
             if sorted.0 == i {
                 let lw = self.measure(label, t.font_small, weight);
@@ -3555,6 +3671,66 @@ impl<'a> Ui<'a> {
             self.cursor_y -= t.spacing;
         }
         clicked
+    }
+
+    /// Cabeçalho como [`Ui::list_header`], com as divisórias entre as colunas
+    /// arrastáveis (como no Finder): arrastar a divisória à esquerda de uma coluna
+    /// passa largura entre ela e a vizinha da esquerda (a primeira divide com "Nome").
+    /// `columns` guarda as larguras novas; `min` é a menor largura de uma coluna (e
+    /// também a do Nome). Devolve a coluna clicada (não conta o fim de um arrasto).
+    pub fn list_header_resizable(&mut self, name: &str, columns: &mut [(&str, f32)], sorted: (usize, bool), min: f32) -> Option<usize> {
+        let t = self.ctx.theme.clone();
+        let total: f32 = columns.iter().map(|c| c.1).sum();
+        let (x0, y0, width) = (self.x, self.cursor_y, self.width);
+        let name_w = width - total;
+        // Divisórias: x de cada uma (à esquerda de cada coluna extra).
+        let mut edges = Vec::new();
+        let mut cx = x0 + name_w;
+        for (_, w) in columns.iter() {
+            edges.push(cx);
+            cx += w;
+        }
+        let pointer = self.ctx.input.pointer.map(|p| (p.0 - self.offset.0, p.1 - self.offset.1));
+        let near = |px: f32, py: f32| edges.iter().position(|e| (px - e).abs() <= 4.0 && py >= y0 && py <= y0 + 24.0);
+        let mut dragged = false;
+        match self.ctx.memory.header_drag {
+            Some((i, start_x, left_w, right_w)) if self.ctx.input.down => {
+                if let Some((px, _)) = pointer {
+                    let left_min = min;
+                    let mut d = px - start_x;
+                    // A vizinha da esquerda (Nome, se i = 0) e a coluna i trocam largura.
+                    d = d.max(left_min - left_w).min(right_w - min);
+                    if i > 0 {
+                        columns[i - 1].1 = left_w + d;
+                    }
+                    columns[i].1 = right_w - d;
+                }
+                self.ctx.repaint = true;
+                dragged = true;
+            }
+            Some(_) => {
+                self.ctx.memory.header_drag = None;
+                dragged = true;
+            }
+            None => {
+                if let Some((px, py)) = pointer
+                    && let Some(i) = near(px, py)
+                    && self.ctx.input.pressed
+                {
+                    let left_w = if i == 0 { name_w } else { columns[i - 1].1 };
+                    self.ctx.memory.header_drag = Some((i, px, left_w, columns[i].1));
+                    dragged = true;
+                }
+            }
+        }
+        let clicked = self.list_header(name, columns, sorted);
+        // Linhas finas nas divisórias, como no Finder.
+        let mut cx = x0 + width - columns.iter().map(|c| c.1).sum::<f32>();
+        for (_, w) in columns.iter() {
+            fill_rounded(self.canvas, cx - 6.0, y0 + 5.0, 1.0, 14.0, 0.0, color(t.line));
+            cx += w;
+        }
+        if dragged { None } else { clicked }
     }
 
     /// Linha de lista em árvore (visualização em lista do Finder): recuo pelo nível,
@@ -3616,6 +3792,10 @@ impl<'a> Ui<'a> {
         let cols: f32 = columns.iter().map(|c| c.1).sum();
         let shown = self.fit(label, t.font, FontWeight::Regular, (rect.0 + rect.2 - cols - ix - 30.0).max(0.0));
         self.draw_text(&shown, ix + 24.0, rect.1 + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, main);
+        // Nome cortado: o ponteiro em cima mostra o nome inteiro.
+        if shown != label {
+            self.tooltip(&r, label);
+        }
         let mut cx = rect.0 + rect.2 - cols;
         for (text, w) in columns {
             let shown = self.fit(text, t.font_small, FontWeight::Regular, w - 8.0);
@@ -3649,6 +3829,9 @@ impl<'a> Ui<'a> {
         let (main, side) = if selected && self.ctx.input.window_active() { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
         let shown = self.fit(label, t.font, FontWeight::Regular, (rect.2 - 40.0 - cols).max(0.0));
         self.draw_text(&shown, rect.0 + 36.0, ty, t.font, FontWeight::Regular, main);
+        if shown != label {
+            self.tooltip(&r, label);
+        }
         let mut cx = rect.0 + rect.2 - cols;
         for (text, w) in columns {
             let shown = self.fit(text, t.font_small, FontWeight::Regular, w - 8.0);

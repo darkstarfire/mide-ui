@@ -247,6 +247,7 @@ pub fn empty_trash(trash: &Path) -> std::io::Result<usize> {
         }
     }
     if removed > 0 {
+        // O mesmo som de mandar para a Lixeira (pedido do usuário).
         crate::sounds::play("trash-empty");
     }
     Ok(removed)
@@ -449,6 +450,7 @@ pub fn delete_from_trash(trash: &Path, name: &str) -> std::io::Result<()> {
         fs::remove_file(&path)?;
     }
     let _ = fs::remove_file(trash.join("info").join(format!("{name}.trashinfo")));
+    crate::sounds::play("trash-empty");
     Ok(())
 }
 

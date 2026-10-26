@@ -97,7 +97,8 @@ novo.
 | `ui.separator()` | Linha fina | — |
 | `ui.space(12.0)` | Espaço vazio | — |
 
-| `ui.tile(Tile::Icon("folder"), "Nome", selecionado, 64)` | Ícone (ou `Tile::Image(&pixmap)`) com o nome embaixo, como no Finder | `.clicked()`, `.double_clicked()` |
+| `ui.tile(Tile::Icon("folder"), "Nome", selecionado, 64)` | Ícone (ou `Tile::Image(&pixmap)`) com o nome embaixo em até duas linhas (cortado no meio, guardando a extensão; escolhido, aparece inteiro; o ponteiro em cima mostra o nome completo), como no Finder | `.clicked()`, `.double_clicked()` |
+| `ui.list_header_resizable("Nome", &mut colunas, ordem, 60.0)` | Cabeçalho de lista com as divisórias arrastáveis (o Nome cresce quando as outras colunas encolhem); nomes cortados em `tree_row`/`list_row` mostram o inteiro numa dica | coluna clicada; `colunas` com as larguras novas |
 | `ui.list_row("folder", "Nome", &[("ontem", 170.0)], selecionada)` | Linha de lista com ícone e colunas à direita | `.clicked()`, `.double_clicked()` |
 | `ui.icon_button("go-previous", "‹", ativo)` | Botão pequeno com ícone do tema (texto de reserva) | `.clicked()` |
 | `ui.icon_toggle("view-list-symbolic", "☰", marcado)` | Botão de ícone que fica marcado | `.clicked()` |
