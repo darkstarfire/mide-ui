@@ -189,11 +189,22 @@ impl Menu<'_> {
         self.y += h;
         let hovered = kind != 2 && self.ctx.input.over(rect);
         // Ponteiro noutra linha do menu de cima (fora do submenu aberto): fecha o
-        // submenu, como no Mac.
+        // submenu, como no Mac, mas só depois de um instante parado nela (indo na
+        // diagonal até o submenu, o ponteiro passa por outras linhas sem fechá-lo).
         if hovered && !self.sub && self.ctx.memory.submenu.is_some() && !self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r)) {
-            self.ctx.memory.submenu = None;
-            self.ctx.memory.submenu_rect = None;
-            self.ctx.repaint = true;
+            let now = std::time::Instant::now();
+            let since = *self.ctx.memory.submenu_leave.get_or_insert(now);
+            let grace = std::time::Duration::from_millis(300);
+            if now.duration_since(since) >= grace {
+                self.ctx.memory.submenu = None;
+                self.ctx.memory.submenu_rect = None;
+                self.ctx.memory.submenu_leave = None;
+                self.ctx.repaint = true;
+            } else {
+                self.ctx.wake_at = Some(self.ctx.wake_at.map_or(since + grace, |w| w.min(since + grace)));
+            }
+        } else if hovered && !self.sub {
+            self.ctx.memory.submenu_leave = None;
         }
         self.rows.push(MenuRow {
             label: label.to_string(),
@@ -262,12 +273,26 @@ impl Menu<'_> {
         let rect = (self.x, row_y, self.w, h);
         self.y += h;
         let over_row = self.ctx.input.over(rect);
-        if over_row && self.ctx.memory.submenu != Some(idx) {
+        // Outro submenu aberto e o ponteiro só de passagem por esta linha: espera.
+        let passing = self.ctx.memory.submenu.is_some_and(|open| open != idx) && self.ctx.memory.submenu_leave.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300));
+        if over_row && passing {
+            let since = self.ctx.memory.submenu_leave.unwrap_or_else(std::time::Instant::now) + std::time::Duration::from_millis(300);
+            self.ctx.wake_at = Some(self.ctx.wake_at.map_or(since, |w| w.min(since)));
+        } else if over_row && self.ctx.memory.submenu.is_some_and(|open| open != idx) && self.ctx.memory.submenu_leave.is_none() {
+            self.ctx.memory.submenu_leave = Some(std::time::Instant::now());
+            self.ctx.repaint = true;
+        }
+        if over_row && !passing && self.ctx.memory.submenu != Some(idx) && (self.ctx.memory.submenu.is_none() || self.ctx.memory.submenu_leave.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(300))) {
+            self.ctx.memory.submenu_leave = None;
             self.ctx.memory.submenu = Some(idx);
             self.ctx.memory.submenu_rect = None;
             self.ctx.repaint = true;
         }
         let open = self.ctx.memory.submenu == Some(idx);
+        // De volta à linha do submenu aberto, ou dentro dele: nada a fechar.
+        if open && (over_row || self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r))) {
+            self.ctx.memory.submenu_leave = None;
+        }
         self.rows.push(MenuRow {
             label: label.to_string(),
             kind: 4,
@@ -509,6 +534,9 @@ pub struct Memory {
     submenu: Option<usize>,
     submenu_rect: Option<(f32, f32, f32, f32)>,
     submenu_h: f32,
+    /// Quando o ponteiro saiu da linha do submenu aberto para outra (fecha depois de
+    /// um instante).
+    submenu_leave: Option<std::time::Instant>,
     /// Largura que o menu aberto precisa para os textos caberem (do quadro anterior).
     menu_auto_w: f32,
     /// O menu abriu neste quadro: o mesmo clique (apertar e soltar no mesmo quadro)
