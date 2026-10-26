@@ -31,6 +31,7 @@
 
 mod app;
 pub mod chooser;
+mod i18n;
 mod input;
 pub mod menubar;
 pub mod picker;
@@ -41,6 +42,7 @@ mod theme;
 mod ui;
 
 pub use app::{run, App, Waker, Window};
+pub use i18n::tr;
 pub use chooser::{Choice, ExtraChoice, FileChooser, Filter, Pattern};
 pub use input::{parse_uri_list, Input, Key, KeyPress};
 pub use menubar::{window_menu, MenuGroup, MenuItem};
@@ -48,4 +50,4 @@ pub use picker::{ListPicker, PickGroup, PickItem, Picked};
 pub use screens::Screen;
 pub use textarea::{Decorations, TextDoc};
 pub use theme::{accent_key, system_accent, system_dark, Rgba, Theme, ACCENTS, RADIUS_WINDOW, TOOLBAR_HEIGHT};
-pub use ui::{ArrangedScreen, ButtonStyle, Menu, Response, TextAreaLook, TextAreaResponse, TabAction, Tile, Ui, WindowRequest, TAG_COLORS};
+pub use ui::{ArrangedScreen, ButtonStyle, Cursor, Tool, Menu, Response, TextAreaLook, TextAreaResponse, TabAction, Tile, Ui, WindowRequest, TAG_COLORS};

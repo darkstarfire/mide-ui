@@ -102,6 +102,9 @@ novo.
 | `ui.list_row("folder", "Nome", &[("ontem", 170.0)], selecionada)` | Linha de lista com ícone e colunas à direita | `.clicked()`, `.double_clicked()` |
 | `ui.icon_button("go-previous", "‹", ativo)` | Botão pequeno com ícone do tema (texto de reserva) | `.clicked()` |
 | `ui.icon_toggle("view-list-symbolic", "☰", marcado)` | Botão de ícone que fica marcado | `.clicked()` |
+| `ui.tool_button("document-open-symbolic", "Abrir arquivo")` | Botão só de ícone com a **dica obrigatória** (I2): aparece com o ponteiro parado sobre ele; sem o ícone, a primeira letra da dica | `.clicked()` |
+| `ui.tool_toggle("utilities-terminal-symbolic", "Terminal", aberto)` | O mesmo, marcado quando `aberto` | `.clicked()` |
+| `ui.tool_group(&[Tool::new("document-open-symbolic", "Abrir arquivo"), Tool::new("folder-open-symbolic", "Abrir pasta")])` | Grupo de botões numa cápsula da barra de ferramentas do Tahoe, cada um com a dica (`Tool::on`, `Tool::enabled`) | índice clicado |
 | `ui.strong("Texto")` | Texto em negrito numa linha só (corta com "…") | — |
 
 | `ui.scroll_area(240.0, \|ui\| ...)` | Área de altura fixa que rola (listas dentro de diálogos) | — |
@@ -210,6 +213,109 @@ O exemplo `mide-ui-demo` é a galeria de tudo isso.
 
 Para o app aparecer no launcher e poder ser fixado na dock, instale um arquivo
 `.desktop` com o mesmo id em `StartupWMClass`.
+
+**Janela de vidro:** `.glass()` troca o fundo opaco pelo vidro de painel do mide (o
+compositor desfoca o que está atrás; o véu é o mesmo da barra lateral do Arquivos).
+Cartões e controles continuam opacos por cima. Com o vidro desligado nas
+Configurações (ou fora do mide), o fundo volta a ser opaco na hora.
+
+### Janelas filhas (Preferências, inspetores)
+
+Um app pode abrir janelas próprias que pertencem à principal: o compositor as mantém
+por cima dela (`xdg_toplevel.set_parent`) e elas fecham junto com o app. O app pede a
+janela com um id e desenha o conteúdo dela em `App::window_view`:
+
+```rust
+impl App for Editor {
+    fn view(&mut self, ui: &mut Ui) {
+        if ui.tool_button("preferences-system-symbolic", "Preferências").clicked() {
+            // Pedir de novo uma janela já aberta não faz nada.
+            ui.open_window("prefs", Window::new("Preferências").size(520, 440).glass());
+        }
+    }
+
+    fn window_view(&mut self, id: &str, ui: &mut Ui) {
+        if id == "prefs" {
+            ui.page(|ui| {
+                ui.title("Preferências");
+                ui.switch("Números de linha", &mut self.numeros);
+                if ui.primary_button("Fechar").clicked() {
+                    ui.close(); // dentro da filha, fecha só ela
+                }
+            });
+        }
+    }
+
+    // Opcionais: perguntar antes de fechar e saber quando fechou.
+    fn window_close_requested(&mut self, _id: &str) -> bool { true }
+    fn window_closed(&mut self, _id: &str) { self.gravar_preferencias(); }
+}
+```
+
+- `ui.open_window(id, Window)`, `ui.close_window(id)`, `ui.is_window_open(id)` e
+  `ui.window_id()` (`None` na principal, `Some(id)` numa filha).
+- A filha usa o `app_id` da principal (a dock mostra um ícone só); da `Window` valem
+  título, tamanhos, `full_size_content`, `fixed_size`, `glass` e `accepts_files`.
+- Cada janela tem a própria entrada (ponteiro, teclado, área de transferência,
+  arquivos soltos) e a própria memória dos componentes; o estado do app é um só (o
+  mesmo `self` nos dois `view`).
+- Vidro numa filha: as regiões vão ao compositor com o nome `app:<app_id>><título>`
+  (espaços como `%20`); a principal continua `app:<app_id>`. Só vale com um
+  compositor que responde `child_glass` ao comando `features` do canal de controle
+  (`mide_ui::control_client::compositor_has`); sem isso, a filha fica opaca (o vidro
+  dela iria para a principal, que tem o mesmo `app_id`).
+
+### Barra lateral, divisórias e ponteiro
+
+```rust
+// Barra lateral de vidro com a largura do app (arrastável de 160 a 420):
+let r = ui.sidebar_panel(&mut self.largura, 160.0, 420.0, |ui| self.arvore(ui), |ui| {
+    // À direita: editor em cima e terminal embaixo, com outra divisória.
+    ui.split_vertical(&mut self.altura_terminal, 80.0, 400.0, |ui| self.editor(ui), |ui| self.terminal(ui));
+});
+if r.submitted() {
+    self.config.largura = self.largura; // o arrasto terminou: hora de gravar
+}
+```
+
+- `ui.split(&mut largura, min, max, esquerda, direita)` e
+  `ui.split_vertical(&mut altura_de_baixo, min, max, cima, baixo)`: dois painéis até o
+  fim da área, cada um recortado no seu retângulo (as coordenadas começam no canto
+  dele), com a divisória arrastável. A resposta tem `changed` enquanto arrasta e
+  `submitted` quando o arrasto termina.
+- `ui.sidebar_panel(...)`: o mesmo `split` com a barra lateral de vidro do mide; numa
+  janela de conteúdo inteiro, flutuante, com os botões da janela no topo (o conteúdo
+  dela começa abaixo deles) e o vazio arrastando a janela.
+- `ui.glass_fill(retângulo, raio)`: o vidro de painel em qualquer retângulo (devolve
+  `false` e pinta opaco com o vidro desligado).
+- `ui.set_cursor(Cursor::ResizeHorizontal)`: forma do ponteiro enquanto ele está na
+  janela (vale no quadro em que é pedida; as divisórias e o cabeçalho de colunas já
+  pedem). Usa o `wp_cursor_shape` do compositor ou, sem ele, o tema de cursores.
+
+### Ícones
+
+Os apps do mide usam sempre os ícones do mide. A busca (`ui.icon`, `icon_button`,
+`tool_button`...) segue esta ordem:
+
+1. os **símbolos embutidos** no mide-ui (`mide_ui::icons::SYMBOLS`): desenho nosso,
+   o mesmo em qualquer desktop. Hoje: `document-open-symbolic` (abrir arquivo: um
+   documento), `document-new-symbolic`, `document-save-symbolic`,
+   `folder-open-symbolic` (abrir pasta: uma pasta), `edit-find-symbolic`,
+   `preferences-system-symbolic`, `view-sidebar-start-symbolic`, `view-dual-symbolic`
+   (painel de baixo), `utilities-terminal-symbolic`, `list-add-symbolic` e
+   `window-close-symbolic`;
+2. o tema do mide (`mide-icons`), quando instalado;
+3. o tema do sistema (gsettings) e o Adwaita, só como reserva;
+4. o `hicolor`.
+
+### Textos e tradução
+
+As dicas dos botões passam por `mide_ui::kit::tr`, o ponto de entrada da tradução
+(I1). Hoje ele devolve o próprio texto; quando os catálogos de idioma chegarem, todo
+texto que já passa por `tr` passa a ser traduzido sem mudar os apps. Textos novos da
+interface devem passar por `tr`.
+
+O exemplo `janelas-filhas` junta tudo isso (`cargo run --example janelas-filhas`).
 
 ## Camadas e painéis de vidro
 
@@ -467,7 +573,8 @@ cargo run --example mide-ui-demo
 
 ## Ainda não tem (próximas versões)
 
-- Vidro em janelas comuns (hoje, só em camadas).
+- Diálogos modais em janela própria (hoje, `ui.modal` dentro da janela; as janelas
+  filhas não bloqueiam a principal).
 - Seleção múltipla e arrastar e soltar entre componentes.
 - Animações dos componentes (o interruptor deslizando).
 - Toque na tela (gestos) e acessibilidade.

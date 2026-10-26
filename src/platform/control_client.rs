@@ -87,6 +87,27 @@ impl Glass {
     }
 }
 
+/// O compositor tem o recurso `name`? Perguntado uma vez (`features`, uma palavra por
+/// recurso). Recursos que o mide-ui usa: `child_glass` (vidro nas janelas filhas, pelo
+/// nome `app:<app_id>><título>`). Fora do mide, ou num compositor que não conhece o
+/// comando, nenhum.
+pub fn compositor_has(name: &str) -> bool {
+    static FEATURES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FEATURES
+        .get_or_init(|| {
+            if !on_mide() {
+                return Vec::new();
+            }
+            let reply = ask_compositor("features").unwrap_or_default().join(" ");
+            if reply.starts_with("erro") {
+                return Vec::new();
+            }
+            reply.split_whitespace().map(str::to_string).collect()
+        })
+        .iter()
+        .any(|f| f == name)
+}
+
 /// O vidro das barras e menus está ligado nas Configurações? Sem ele, os painéis
 /// usam o fundo claro quase opaco de antes.
 pub fn panel_glass() -> bool {

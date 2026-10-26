@@ -34,7 +34,7 @@ use smithay_client_toolkit::{
     registry_handlers,
     seat::{
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
-        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        pointer::{CursorIcon, PointerEvent, PointerEventKind, PointerHandler, ThemeSpec, ThemedPointer},
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -59,7 +59,7 @@ use tiny_skia::Pixmap;
 use super::{
     input::{Key, KeyPress},
     theme::{color, Theme},
-    ui::{Ctx, Ui},
+    ui::{Ctx, Cursor, Ui},
 };
 use crate::ui::draw::to_argb8888;
 
@@ -79,6 +79,26 @@ pub trait App {
     /// [`window_menu`](super::window_menu) para o menu "Janela".
     fn menu_bar(&mut self) -> Vec<super::MenuGroup> {
         Vec::new()
+    }
+
+    /// Conteúdo da janela filha `id`, aberta com [`Ui::open_window`](super::Ui::open_window)
+    /// (Preferências, por exemplo). Chamado a cada quadro dela, como o `view`; dentro,
+    /// `ui.close()` fecha só a filha e [`Ui::window_id`](super::Ui::window_id) diz qual é.
+    fn window_view(&mut self, id: &str, ui: &mut Ui) {
+        let _ = (id, ui);
+    }
+
+    /// O usuário pediu para fechar a janela filha `id` (botão da barra, atalho).
+    /// Devolva `false` para ela continuar aberta.
+    fn window_close_requested(&mut self, id: &str) -> bool {
+        let _ = id;
+        true
+    }
+
+    /// A janela filha `id` fechou (pelo usuário, por `ui.close()` dentro dela ou por
+    /// `ui.close_window`): hora de guardar o que ela editou.
+    fn window_closed(&mut self, id: &str) {
+        let _ = id;
     }
 }
 
@@ -113,6 +133,8 @@ pub struct Window {
     pub full_size: bool,
     /// Tamanho fixo (`Window::fixed_size`): sem redimensionar, minimizar nem maximizar.
     pub fixed: bool,
+    /// A janela inteira é de vidro (`Window::glass`).
+    pub glass: bool,
 }
 
 impl Window {
@@ -135,7 +157,18 @@ impl Window {
             corner: false,
             full_size: false,
             fixed: false,
+            glass: false,
         }
+    }
+
+    /// Janela inteira de vidro de painel (Preferências, inspetores): o compositor
+    /// desfoca o que está atrás e o fundo é o véu translúcido do mide (`docs/design.md`,
+    /// "Vidro"), no lugar da cor opaca. Os cartões e controles continuam opacos por cima.
+    /// Com o vidro desligado nas Configurações (ou fora do mide), o fundo volta a ser
+    /// opaco, na hora.
+    pub fn glass(mut self) -> Self {
+        self.glass = true;
+        self
     }
 
     /// Janela de tamanho fixo, como o "Sobre este computador": não redimensiona, e os
@@ -281,6 +314,9 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
 
     let surface = compositor.create_surface(&qh);
     let output_state = OutputState::new(&globals, &qh);
+    // Janelas (a principal e as filhas, `Ui::open_window`); camadas e telas de bloqueio
+    // também podem abrir janelas filhas.
+    let xdg_shell = XdgShell::bind(&globals, &qh).ok();
     // Guardado só para criar as camadas das outras telas (`Window::on_every_output`).
     let mut layer_shell_kept = None;
     let shell = if window.lock {
@@ -335,7 +371,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             Shell::Layer(layer, namespace.clone())
         }
         None => {
-            let xdg_shell = XdgShell::bind(&globals, &qh)?;
+            let xdg_shell = xdg_shell.as_ref().ok_or("o compositor não tem xdg-shell")?;
             // Fora do mide, toda janela desenha a própria barra (no visual do Tahoe, em
             // qualquer desktop); no mide, as comuns ganham a barra do compositor.
             let standalone = !crate::control_client::on_mide();
@@ -362,10 +398,10 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
 
     // Escala exata da tela (fracionária) e o tamanho em pontos da superfície: o app
     // desenha em pixels e o compositor mostra sem esticar.
+    let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
+    let fractional_manager = globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()).ok();
     let (viewport, fractional) = if window.native_scale {
-        let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
-        let manager = globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()).ok();
-        match (viewporter, manager) {
+        match (&viewporter, &fractional_manager) {
             (Some(viewporter), Some(manager)) => {
                 let surface = shell.wl_surface();
                 (Some(viewporter.get_viewport(surface, &qh, ())), Some(manager.get_fractional_scale(surface, &qh, ())))
@@ -398,6 +434,15 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         app_id: window.app_id.clone(),
         last_frame: None,
         pointer: None,
+        conn: conn.clone(),
+        cursor_applied: Cursor::Default,
+        xdg_shell,
+        viewporter,
+        fractional_manager,
+        children: Vec::new(),
+        keyboard_on: None,
+        drop_on: None,
+        window_glass: window.glass,
         seat: None,
         keyboard: None,
         size: window.size,
@@ -451,7 +496,12 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     let (ping, ping_source) = make_ping().map_err(|e| e.to_string())?;
     event_loop
         .handle()
-        .insert_source(ping_source, |_, _, runner: &mut Runner| runner.dirty = true)
+        .insert_source(ping_source, |_, _, runner: &mut Runner| {
+            runner.dirty = true;
+            for child in &mut runner.children {
+                child.dirty = true;
+            }
+        })
         .map_err(|e| e.to_string())?;
     runner.ctx.waker = Some(Waker(ping));
     // Quadros pedidos pelo app (`Ui::request_tick`), por exemplo enquanto miniaturas
@@ -464,11 +514,12 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             }
             // Janela com vidro: a opção mudou nas Configurações? Redesenha (opaca ou
             // translúcida). Uma consulta por segundo (o arquivo só é lido se mudou).
-            if let Some(on) = runner.glass_on {
-                runner.glass_checks = (runner.glass_checks + 1) % 25;
-                if runner.glass_checks == 0 && crate::control_client::panel_glass() != on {
-                    runner.dirty = true;
-                }
+            runner.glass_checks = (runner.glass_checks + 1) % 25;
+            if let Some(on) = runner.glass_on
+                && runner.glass_checks == 0
+                && crate::control_client::panel_glass() != on
+            {
+                runner.dirty = true;
             }
             // Claro/escuro trocado nas Configurações: o app muda na hora.
             if runner.follow_theme {
@@ -485,18 +536,51 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
                 runner.ctx.wake_at = None;
                 runner.dirty = true;
             }
+            // Janelas filhas: o mesmo para cada uma (animação, vidro, quadro agendado e
+            // o tema, que é o da principal).
+            let theme_now = runner.ctx.theme.clone();
+            let now = std::time::Instant::now();
+            let mut child_ticking = false;
+            for child in &mut runner.children {
+                child_ticking |= child.ctx.ticking;
+                if child.ctx.ticking {
+                    child.dirty = true;
+                }
+                if child.ctx.wake_at.is_some_and(|at| now >= at) {
+                    child.ctx.wake_at = None;
+                    child.dirty = true;
+                }
+                if let Some(on) = child.glass_on
+                    && runner.glass_checks == 0
+                    && crate::control_client::panel_glass() != on
+                {
+                    child.dirty = true;
+                }
+                if child.ctx.theme.dark != theme_now.dark || child.ctx.theme.accent != theme_now.accent {
+                    child.ctx.theme = theme_now.clone();
+                    child.last_frame = None;
+                    child.dirty = true;
+                }
+            }
             // Animando (menu entrando, transições): no ritmo da tela; senão, mais devagar.
-            TimeoutAction::ToDuration(if runner.ctx.ticking { std::time::Duration::from_millis(16) } else { TICK })
+            TimeoutAction::ToDuration(if runner.ctx.ticking || child_ticking { std::time::Duration::from_millis(16) } else { TICK })
         })
         .map_err(|e| e.to_string())?;
     while !runner.exit {
         event_loop.dispatch(None, &mut runner)?;
         if runner.dirty && runner.configured {
             runner.frame();
-            runner.clipboard();
-            runner.start_drag();
-            runner.window_request();
         }
+        for i in (0..runner.children.len()).rev() {
+            if runner.children[i].dirty && runner.children[i].configured {
+                runner.child_frame(i);
+            }
+        }
+        runner.clipboard();
+        runner.start_drag();
+        runner.window_request();
+        runner.manage_children();
+        runner.apply_cursor();
     }
     // O desbloqueio (e o resto) precisa chegar ao compositor antes de sair.
     let _ = conn.flush();
@@ -573,7 +657,24 @@ struct Runner {
     app_id: String,
     /// Último quadro enviado (para não reenviar um igual).
     last_frame: Option<Pixmap>,
-    pointer: Option<wl_pointer::WlPointer>,
+    /// O ponteiro, com a forma pedida pelos componentes (`Ui::set_cursor`): pelo
+    /// `wp_cursor_shape` quando o compositor tem, senão pelo tema de cursores.
+    pointer: Option<ThemedPointer>,
+    conn: Connection,
+    /// Forma do ponteiro mandada por último (a seta ao entrar numa janela).
+    cursor_applied: Cursor,
+    /// Para criar as janelas filhas (`Ui::open_window`), com a escala de cada uma.
+    xdg_shell: Option<XdgShell>,
+    viewporter: Option<WpViewporter>,
+    fractional_manager: Option<WpFractionalScaleManagerV1>,
+    /// Janelas filhas abertas.
+    children: Vec<Child>,
+    /// Superfície com o foco do teclado (a principal ou uma filha).
+    keyboard_on: Option<wl_surface::WlSurface>,
+    /// Superfície sob um arrasto de outro app (para entregar os arquivos a ela).
+    drop_on: Option<wl_surface::WlSurface>,
+    /// A janela principal é de vidro (`Window::glass`).
+    window_glass: bool,
     seat: Option<wl_seat::WlSeat>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     size: (u32, u32),
@@ -627,6 +728,82 @@ struct Runner {
     main_output: Option<String>,
     extras: Vec<Extra>,
     pointer_on: Option<wl_surface::WlSurface>,
+}
+
+/// Janela filha (`Ui::open_window`): a janela do xdg-shell, o `Ctx` dela (entrada,
+/// memória dos componentes, vidro) e o mesmo estado de tamanho e escala da principal.
+struct Child {
+    id: String,
+    /// O `app_id` (o mesmo da principal).
+    app_id: String,
+    xdg: XdgWindow,
+    ctx: Ctx,
+    title: String,
+    size: (u32, u32),
+    min_size: (u32, u32),
+    scale: f32,
+    native_scale: bool,
+    viewport: Option<WpViewport>,
+    _fractional: Option<WpFractionalScaleV1>,
+    configured: bool,
+    dirty: bool,
+    last_frame: Option<Pixmap>,
+    maximized: bool,
+    constrained: bool,
+    configured_size: (Option<NonZeroU32>, Option<NonZeroU32>),
+    wanted_size: Option<(u32, u32)>,
+    /// Fora do mide: a filha arredonda os cantos e desenha a própria barra de título.
+    standalone: bool,
+    client_bar: bool,
+    accepts_files: bool,
+    /// A janela inteira é de vidro (`Window::glass`).
+    glass: bool,
+    glass_ctl: crate::control_client::Glass,
+    glass_on: Option<bool>,
+    /// Nome do vidro desta janela no compositor (muda com o título).
+    glass_key: String,
+}
+
+impl Child {
+    fn physical_size(&self) -> (u32, u32) {
+        ((self.size.0 as f32 * self.scale).round().max(1.0) as u32, (self.size.1 as f32 * self.scale).round().max(1.0) as u32)
+    }
+
+    fn set_scale(&mut self, scale: f32) {
+        if (scale - self.scale).abs() > f32::EPSILON && scale > 0.0 {
+            self.scale = scale;
+            self.last_frame = None;
+            self.dirty = true;
+        }
+    }
+}
+
+/// Nome do vidro de uma janela filha no canal de controle do compositor:
+/// `app:<app_id>><título>` (espaços e `%` codificados, as palavras do canal são
+/// separadas por espaço). A principal continua com `app:<app_id>`.
+fn child_glass_key(app_id: &str, title: &str) -> String {
+    let title: String = title.chars().map(|c| match c {
+        '%' => "%25".to_string(),
+        c if c.is_whitespace() => "%20".to_string(),
+        c => c.to_string(),
+    }).collect();
+    format!("app:{app_id}>{title}")
+}
+
+/// Fundo de uma janela no começo do quadro (depois de `begin_frame`): opaco, ou o véu
+/// de vidro com a janela inteira pedida ao compositor (`Window::glass`).
+fn paint_window_background(canvas: &mut Pixmap, ctx: &mut Ctx, glass: bool) {
+    ctx.glass_capable |= glass;
+    ctx.window_glass = false;
+    if glass && ctx.glass_enabled() {
+        let k = crate::ui::draw::scale();
+        let (w, h) = (canvas.width() as f32 / k, canvas.height() as f32 / k);
+        crate::ui::draw::paint_rounded_solid(canvas, 0.0, 0.0, w, h, 0.0, ctx.theme.sidebar_glass);
+        ctx.glass.push((0.0, 0.0, w, h, 0.0));
+        ctx.window_glass = true;
+    } else {
+        canvas.fill(color(ctx.theme.background));
+    }
 }
 
 /// Camada de outra tela de um app em todas as telas: a tela (saída e nome), onde ela
@@ -688,11 +865,11 @@ impl Runner {
             let Some(mut canvas) = Pixmap::new(pw, ph) else {
                 return;
             };
+            self.ctx.begin_frame();
             // Camadas são transparentes: o app desenha só os painéis.
             if matches!(self.shell, Shell::Xdg(_)) {
-                canvas.fill(color(self.ctx.theme.background));
+                paint_window_background(&mut canvas, &mut self.ctx, self.window_glass);
             }
-            self.ctx.begin_frame();
             let mut window_menu = None;
             {
                 let mut ui = Ui::root(&mut canvas, &mut self.ctx);
@@ -1105,9 +1282,312 @@ impl Runner {
     }
 }
 
+impl Runner {
+    /// A janela de uma superfície: `Some(None)` a principal (ou uma camada dela),
+    /// `Some(Some(id))` uma filha, `None` nenhuma deste app.
+    fn window_of(&self, surface: &wl_surface::WlSurface) -> Option<Option<String>> {
+        if surface == self.shell.wl_surface() || self.extras.iter().any(|e| e.layer.wl_surface() == surface) {
+            return Some(None);
+        }
+        self.children.iter().find(|c| c.xdg.wl_surface() == surface).map(|c| Some(c.id.clone()))
+    }
+
+    /// O `Ctx` de uma janela (`None`: a principal) e a marca de "desenhar de novo".
+    fn ctx_of(&mut self, window: Option<&str>) -> Option<(&mut Ctx, &mut bool)> {
+        match window {
+            None => Some((&mut self.ctx, &mut self.dirty)),
+            Some(id) => self.children.iter_mut().find(|c| c.id == id).map(|c| (&mut c.ctx, &mut c.dirty)),
+        }
+    }
+
+    /// O `Ctx` de quem tem o foco do teclado (a principal, se nenhuma filha tem).
+    fn keyboard_ctx(&mut self) -> (&mut Ctx, &mut bool) {
+        let window = self.keyboard_on.clone().and_then(|s| self.window_of(&s)).flatten();
+        match window.and_then(|id| self.children.iter().position(|c| c.id == id)) {
+            Some(i) => {
+                let child = &mut self.children[i];
+                (&mut child.ctx, &mut child.dirty)
+            }
+            None => (&mut self.ctx, &mut self.dirty),
+        }
+    }
+
+    /// Abre e fecha as janelas filhas pedidas no quadro (`Ui::open_window`,
+    /// `Ui::close_window`, `ui.close()` dentro de uma filha) e conta a todas quais
+    /// estão abertas.
+    fn manage_children(&mut self) {
+        let mut opens: Vec<(String, Window)> = std::mem::take(&mut self.ctx.open_windows);
+        let mut closes: Vec<String> = std::mem::take(&mut self.ctx.close_windows);
+        for child in &mut self.children {
+            opens.append(&mut child.ctx.open_windows);
+            closes.append(&mut child.ctx.close_windows);
+            if std::mem::take(&mut child.ctx.close_requested) {
+                closes.push(child.id.clone());
+            }
+        }
+        if opens.is_empty() && closes.is_empty() {
+            return;
+        }
+        for id in closes {
+            self.close_child(&id);
+        }
+        for (id, window) in opens {
+            if !self.children.iter().any(|c| c.id == id) {
+                self.open_child(id, window);
+            }
+        }
+        let open: Vec<String> = self.children.iter().map(|c| c.id.clone()).collect();
+        self.ctx.windows_open = open.clone();
+        for child in &mut self.children {
+            child.ctx.windows_open = open.clone();
+        }
+        self.dirty = true;
+    }
+
+    fn open_child(&mut self, id: String, window: Window) {
+        let Some(xdg_shell) = &self.xdg_shell else {
+            tracing::warn!("janela filha {id}: o compositor não tem xdg-shell");
+            return;
+        };
+        let standalone = !crate::control_client::on_mide();
+        let surface = self.compositor.create_surface(&self.qh);
+        let decorations = if window.full_size || standalone { WindowDecorations::ClientOnly } else { WindowDecorations::RequestServer };
+        let xdg = xdg_shell.create_window(surface, decorations, &self.qh);
+        // Pertence à principal: o compositor a mantém por cima dela (e a centra sobre ela).
+        if let Shell::Xdg(parent) = &self.shell {
+            xdg.set_parent(Some(parent));
+        }
+        xdg.set_title(window.title.clone());
+        xdg.set_app_id(self.app_id.clone());
+        xdg.set_min_size(Some(window.min_size));
+        if window.fixed {
+            xdg.set_max_size(Some(window.size));
+        }
+        xdg.commit();
+        let (viewport, fractional) = match (window.native_scale, &self.viewporter, &self.fractional_manager) {
+            (true, Some(viewporter), Some(manager)) => {
+                let surface = xdg.wl_surface();
+                (Some(viewporter.get_viewport(surface, &self.qh, ())), Some(manager.get_fractional_scale(surface, &self.qh, surface.clone())))
+            }
+            _ => (None, None),
+        };
+        let mut ctx = Ctx::new(self.ctx.theme.clone());
+        ctx.content_window = window.full_size;
+        ctx.fixed_size = window.fixed;
+        ctx.waker = self.ctx.waker.clone();
+        ctx.window_id = Some(id.clone());
+        // Vidro numa filha só com o compositor que separa o dela do da principal.
+        ctx.glass_allowed = crate::control_client::compositor_has("child_glass");
+        tracing::info!("janela filha {id} aberta: {} ({}x{})", window.title, window.size.0, window.size.1);
+        self.children.push(Child {
+            glass_key: child_glass_key(&self.app_id, &window.title),
+            app_id: self.app_id.clone(),
+            id,
+            xdg,
+            ctx,
+            title: window.title.clone(),
+            size: window.size,
+            min_size: window.min_size,
+            // Começa na escala da principal (a fracionária chega logo depois).
+            scale: if window.native_scale { self.scale } else { 1.0 },
+            native_scale: window.native_scale,
+            viewport,
+            _fractional: fractional,
+            configured: false,
+            dirty: true,
+            last_frame: None,
+            maximized: false,
+            constrained: false,
+            configured_size: (None, None),
+            wanted_size: None,
+            standalone,
+            client_bar: standalone && !window.full_size,
+            accepts_files: window.accepts_files,
+            glass: window.glass,
+            glass_ctl: Default::default(),
+            glass_on: None,
+        });
+    }
+
+    fn close_child(&mut self, id: &str) {
+        let Some(i) = self.children.iter().position(|c| c.id == id) else {
+            return;
+        };
+        let mut child = self.children.remove(i);
+        // O vidro pedido por ela sai do compositor.
+        child.glass_ctl.set(&child.glass_key, &[]);
+        let surface = child.xdg.wl_surface().clone();
+        for slot in [&mut self.keyboard_on, &mut self.pointer_on, &mut self.drop_on] {
+            if slot.as_ref() == Some(&surface) {
+                *slot = None;
+            }
+        }
+        tracing::info!("janela filha {id} fechada");
+        drop(child);
+        self.app.window_closed(id);
+        self.dirty = true;
+    }
+
+    /// Um quadro da janela filha `i` (como `frame`, sem as camadas e menus da barra).
+    fn child_frame(&mut self, i: usize) {
+        let main_scale = self.scale;
+        self.child_frame_inner(i);
+        crate::ui::draw::set_scale(main_scale);
+    }
+
+    fn child_frame_inner(&mut self, i: usize) {
+        let Runner { children, app, pool, .. } = self;
+        let child = &mut children[i];
+        child.dirty = false;
+        crate::ui::draw::set_scale(child.scale);
+        let mut pixmap = None;
+        for _ in 0..2 {
+            let (pw, ph) = child.physical_size();
+            let Some(mut canvas) = Pixmap::new(pw, ph) else {
+                return;
+            };
+            child.ctx.begin_frame();
+            paint_window_background(&mut canvas, &mut child.ctx, child.glass);
+            let mut window_menu = None;
+            {
+                let mut ui = Ui::root(&mut canvas, &mut child.ctx);
+                let id = child.id.as_str();
+                if child.client_bar {
+                    let (w, _) = ui.window_size();
+                    window_menu = ui.client_title_bar(&child.title, &[]);
+                    ui.at(0.0, super::ui::CLIENT_BAR_HEIGHT, w, |ui| app.window_view(id, ui));
+                } else {
+                    app.window_view(id, &mut ui);
+                }
+            }
+            if let Some(overlay) = child.ctx.take_overlay() {
+                let (alpha, dy) = child.ctx.overlay_look();
+                let paint = tiny_skia::PixmapPaint { opacity: alpha, ..Default::default() };
+                canvas.draw_pixmap(0, crate::ui::draw::px(dy as f32), overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
+            }
+            match window_menu.as_deref() {
+                Some(super::menubar::MINIMIZE) => child.xdg.set_minimized(),
+                Some(super::menubar::ZOOM) => {
+                    if child.maximized { child.xdg.unset_maximized() } else { child.xdg.set_maximized() }
+                }
+                _ => {}
+            }
+            if child.standalone && !child.maximized {
+                let radius = if child.ctx.content_window { super::theme::RADIUS_WINDOW } else { 12.0 };
+                crate::ui::draw::round_corners(&mut canvas, radius * child.scale);
+            }
+            if let Some((size, min)) = child.ctx.size_request.take() {
+                child.xdg.set_min_size(Some(min));
+                child.min_size = min;
+                if child.constrained {
+                    child.wanted_size = Some(size);
+                } else if size != child.size {
+                    child.size = size;
+                    child.last_frame = None;
+                    child.dirty = true;
+                }
+            }
+            if let Some(title) = child.ctx.title.take()
+                && title != child.title
+            {
+                child.xdg.set_title(title.clone());
+                // O vidro muda de nome junto com o título: o antigo sai.
+                child.glass_ctl.set(&child.glass_key, &[]);
+                child.glass_ctl = Default::default();
+                child.glass_key = child_glass_key(&child.app_id, &title);
+                child.title = title;
+            }
+            let again = child.ctx.repaint;
+            child.ctx.end_frame();
+            pixmap = Some(canvas);
+            if !again {
+                break;
+            }
+        }
+        // `ui.close()` dentro da filha: fecha (no `manage_children`).
+        if child.ctx.close_requested {
+            child.dirty = false;
+            return;
+        }
+        let Some(pixmap) = pixmap else {
+            return;
+        };
+        if crate::control_client::on_mide() {
+            let rects = if child.ctx.glass_enabled() { child.ctx.glass.clone() } else { Vec::new() };
+            child.glass_ctl.set(&child.glass_key, &rects);
+        }
+        child.glass_on = child.ctx.glass_capable.then(crate::control_client::panel_glass);
+        let (w, h) = child.physical_size();
+        if (pixmap.width(), pixmap.height()) != (w, h) {
+            child.dirty = true;
+            return;
+        }
+        if child.last_frame.as_ref().is_some_and(|last| last.width() == w && last.height() == h && last.data() == pixmap.data()) {
+            return;
+        }
+        let Ok((buffer, canvas)) = pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+            return;
+        };
+        to_argb8888(&pixmap, canvas);
+        let surface = child.xdg.wl_surface();
+        let (dx, dy, dw, dh) = child.last_frame.as_ref().and_then(|last| changed_area(last, &pixmap)).unwrap_or((0, 0, w, h));
+        surface.damage_buffer(dx as i32, dy as i32, dw as i32, dh as i32);
+        if let Some(viewport) = &child.viewport {
+            viewport.set_destination(child.size.0 as i32, child.size.1 as i32);
+        } else if child.native_scale && child.scale > 1.0 {
+            surface.set_buffer_scale(child.scale as i32);
+        }
+        if buffer.attach_to(surface).is_ok() {
+            child.xdg.commit();
+        }
+        child.last_frame = Some(pixmap);
+    }
+
+    /// Manda ao compositor a forma do ponteiro que a janela sob ele pediu no último
+    /// quadro (só quando muda: a seta comum não é reenviada a cada quadro).
+    fn apply_cursor(&mut self) {
+        let Some(on) = self.pointer_on.clone() else {
+            return;
+        };
+        let wanted = match self.window_of(&on) {
+            Some(None) => self.ctx.cursor,
+            Some(Some(id)) => self.children.iter().find(|c| c.id == id).and_then(|c| c.ctx.cursor),
+            None => return,
+        }
+        .unwrap_or_default();
+        if wanted == self.cursor_applied {
+            return;
+        }
+        let icon = match wanted {
+            Cursor::Default => CursorIcon::Default,
+            Cursor::Pointer => CursorIcon::Pointer,
+            Cursor::Text => CursorIcon::Text,
+            Cursor::ResizeHorizontal => CursorIcon::ColResize,
+            Cursor::ResizeVertical => CursorIcon::RowResize,
+            Cursor::Move => CursorIcon::Move,
+            Cursor::NotAllowed => CursorIcon::NotAllowed,
+        };
+        if let Some(pointer) = &self.pointer {
+            match pointer.set_cursor(&self.conn, icon) {
+                Ok(()) => self.cursor_applied = wanted,
+                Err(err) => {
+                    tracing::debug!("ponteiro {wanted:?} não mudou: {err}");
+                    self.cursor_applied = wanted;
+                }
+            }
+        }
+    }
+}
+
 impl CompositorHandler for Runner {
     /// Escala inteira da tela (compositores sem a escala fracionária).
-    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, factor: i32) {
+    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface, factor: i32) {
+        if let Some(child) = self.children.iter_mut().find(|c| c.xdg.wl_surface() == surface) {
+            if child.native_scale && child.viewport.is_none() {
+                child.set_scale(factor.max(1) as f32);
+            }
+            return;
+        }
         if self.native_scale && self.viewport.is_none() {
             self.set_scale(factor.max(1) as f32);
         }
@@ -1170,6 +1650,32 @@ impl Runner {
 impl Runner {
     /// Atende o que o app de conteúdo inteiro pediu à janela neste quadro.
     fn window_request(&mut self) {
+        // Pedidos das janelas filhas de conteúdo inteiro (luzes, arrastar a janela).
+        for i in (0..self.children.len()).rev() {
+            let Some(request) = self.children[i].ctx.window_request.take() else {
+                continue;
+            };
+            let child = &self.children[i];
+            match request {
+                super::ui::WindowRequest::Move => {
+                    if let Some(seat) = &self.seat {
+                        child.xdg.move_(seat, self.press_serial);
+                    }
+                }
+                super::ui::WindowRequest::Minimize => child.xdg.set_minimized(),
+                super::ui::WindowRequest::ToggleMaximize => {
+                    if child.maximized { child.xdg.unset_maximized() } else { child.xdg.set_maximized() }
+                }
+                super::ui::WindowRequest::Close => {
+                    let id = child.id.clone();
+                    if self.app.window_close_requested(&id) {
+                        self.close_child(&id);
+                    } else {
+                        self.children[i].dirty = true;
+                    }
+                }
+            }
+        }
         let Some(request) = self.ctx.window_request.take() else {
             return;
         };
@@ -1202,7 +1708,15 @@ impl Runner {
 }
 
 impl WindowHandler for Runner {
-    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow) {
+    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, window: &XdgWindow) {
+        if let Some(id) = self.children.iter().find(|c| c.xdg.wl_surface() == window.wl_surface()).map(|c| c.id.clone()) {
+            if self.app.window_close_requested(&id) {
+                self.close_child(&id);
+            } else if let Some((_, dirty)) = self.ctx_of(Some(&id)) {
+                *dirty = true;
+            }
+            return;
+        }
         if self.app.close_requested() {
             self.exit = true;
         } else {
@@ -1210,7 +1724,33 @@ impl WindowHandler for Runner {
         }
     }
 
-    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow, configure: WindowConfigure, _: u32) {
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, window: &XdgWindow, configure: WindowConfigure, _: u32) {
+        if let Some(child) = self.children.iter_mut().find(|c| c.xdg.wl_surface() == window.wl_surface()) {
+            child.maximized = configure.is_maximized();
+            child.ctx.maximized = configure.is_maximized();
+            child.ctx.input.active = Some(configure.is_activated());
+            let constrained = configure.is_maximized() || configure.is_fullscreen() || configure.is_tiled_left() || configure.is_tiled_right() || configure.is_tiled_top() || configure.is_tiled_bottom();
+            let was_constrained = std::mem::replace(&mut child.constrained, constrained);
+            let changed = constrained || was_constrained || configure.new_size != child.configured_size;
+            child.configured_size = configure.new_size;
+            if changed {
+                if let Some(w) = configure.new_size.0.map(NonZeroU32::get) {
+                    child.size.0 = w.max(child.min_size.0);
+                }
+                if let Some(h) = configure.new_size.1.map(NonZeroU32::get) {
+                    child.size.1 = h.max(child.min_size.1);
+                }
+            }
+            if was_constrained
+                && !constrained
+                && let Some(size) = child.wanted_size.take()
+            {
+                child.size = (size.0.max(child.min_size.0), size.1.max(child.min_size.1));
+            }
+            child.configured = true;
+            child.dirty = true;
+            return;
+        }
         self.maximized = configure.is_maximized();
         self.ctx.maximized = configure.is_maximized();
         let active = configure.is_activated();
@@ -1330,10 +1870,19 @@ impl SeatHandler for Runner {
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
         self.seat.get_or_insert_with(|| seat.clone());
         if capability == Capability::Pointer && self.pointer.is_none() {
-            self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
+            let surface = self.compositor.create_surface(qh);
+            self.pointer = self.seat_state.get_pointer_with_theme::<_, ()>(qh, &seat, self.shm.wl_shm(), surface, ThemeSpec::System).ok();
         }
         if capability == Capability::Keyboard && self.keyboard.is_none() {
-            self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
+            // Com a repetição de teclas do compositor (atraso e taxa do `repeat_info`): o
+            // toolkit repete a última tecla segurada num temporizador do laço de eventos
+            // e para ao soltar, ao perder o foco ou ao apertar outra; modificadores não
+            // repetem. Cada repetição passa pelo mesmo caminho do `repeat_key`.
+            let repeat: smithay_client_toolkit::seat::keyboard::repeat::RepeatCallback<Runner> = Box::new(|runner: &mut Runner, _, event| {
+                runner.keyboard_ctx().0.input.repeat = true;
+                runner.key(event);
+            });
+            self.keyboard = self.seat_state.get_keyboard_with_repeat(qh, &seat, None, self.loop_handle.clone(), repeat).ok();
         }
         if self.data_device.is_none() {
             self.data_device = self.data_devices.as_ref().map(|m| m.get_data_device(qh, &seat));
@@ -1342,7 +1891,7 @@ impl SeatHandler for Runner {
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
         if capability == Capability::Pointer {
             if let Some(p) = self.pointer.take() {
-                p.release();
+                p.pointer().release();
             }
         }
         if capability == Capability::Keyboard {
@@ -1359,8 +1908,12 @@ impl PointerHandler for Runner {
         const BTN_LEFT: u32 = 0x110;
         for event in events {
             // Onde a superfície do evento começa no desktop: a principal ou a camada de
-            // outra tela (`Window::on_every_output`); outra superfície fica de fora.
-            let origin = if &event.surface == self.shell.wl_surface() {
+            // outra tela (`Window::on_every_output`); uma janela filha tem a própria
+            // entrada; outra superfície fica de fora.
+            let child = self.children.iter().position(|c| c.xdg.wl_surface() == &event.surface);
+            let origin = if child.is_some() {
+                (0.0, 0.0)
+            } else if &event.surface == self.shell.wl_surface() {
                 self.main_origin
             } else if let Some(extra) = self.extras.iter().find(|e| e.layer.wl_surface() == &event.surface) {
                 extra.origin
@@ -1369,20 +1922,31 @@ impl PointerHandler for Runner {
             };
             // Tudo nas coordenadas da principal (pode cair fora dela).
             let local = (event.position.0 as f32, event.position.1 as f32);
-            let pos = super::screens::to_main(local, origin, self.main_origin);
-            let input = &mut self.ctx.input;
+            let pos = if child.is_some() { local } else { super::screens::to_main(local, origin, self.main_origin) };
+            let every_output = self.every_output;
+            let (input, dirty) = match child {
+                Some(i) => {
+                    let child = &mut self.children[i];
+                    (&mut child.ctx.input, &mut child.dirty)
+                }
+                None => (&mut self.ctx.input, &mut self.dirty),
+            };
             match event.kind {
                 PointerEventKind::Enter { .. } => {
                     input.pointer = Some(pos);
                     self.pointer_on = Some(event.surface.clone());
+                    // Ao entrar, o compositor mostra a seta (a forma volta a ser pedida).
+                    self.cursor_applied = Cursor::Default;
                 }
                 PointerEventKind::Motion { .. } => input.pointer = Some(pos),
                 // Saindo de uma tela para outra do app, o `Enter` da outra pode chegar
                 // antes: só apaga o ponteiro se ele estava nesta.
                 PointerEventKind::Leave { .. } => {
-                    if !self.every_output || self.pointer_on.as_ref() == Some(&event.surface) {
+                    if child.is_some() || !every_output || self.pointer_on.as_ref() == Some(&event.surface) {
                         input.pointer = None;
-                        self.pointer_on = None;
+                        if self.pointer_on.as_ref() == Some(&event.surface) {
+                            self.pointer_on = None;
+                        }
                     }
                 }
                 PointerEventKind::Press { button, serial, .. } if button == BTN_LEFT => {
@@ -1407,24 +1971,33 @@ impl PointerHandler for Runner {
                 }
                 _ => continue,
             }
-            self.dirty = true;
+            *dirty = true;
         }
     }
 }
 
 impl KeyboardHandler for Runner {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {
-        self.ctx.input.focused = true;
-        self.dirty = true;
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, surface: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {
+        self.keyboard_on = Some(surface.clone());
+        let (ctx, dirty) = self.keyboard_ctx();
+        ctx.input.focused = true;
+        *dirty = true;
     }
-    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {
-        self.ctx.input.focused = false;
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, surface: &wl_surface::WlSurface, _: u32) {
+        let window = self.window_of(surface).flatten();
+        if self.keyboard_on.as_ref() == Some(surface) {
+            self.keyboard_on = None;
+        }
+        let Some((ctx, dirty)) = self.ctx_of(window.as_deref()) else {
+            return;
+        };
+        ctx.input.focused = false;
         // Sem foco, nenhuma tecla continua "segurada" para o app.
-        self.ctx.input.ctrl = false;
-        self.ctx.input.shift = false;
-        self.ctx.input.alt = false;
-        self.ctx.input.logo = false;
-        self.dirty = true;
+        ctx.input.ctrl = false;
+        ctx.input.shift = false;
+        ctx.input.alt = false;
+        ctx.input.logo = false;
+        *dirty = true;
     }
 
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, serial: u32, event: KeyEvent) {
@@ -1433,23 +2006,26 @@ impl KeyboardHandler for Runner {
     }
 
     fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, event: KeyEvent) {
-        self.ctx.input.repeat = true;
+        self.keyboard_ctx().0.input.repeat = true;
         self.key(event);
     }
 
     fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
 
     fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, modifiers: Modifiers, _: RawModifiers, _: u32) {
-        self.ctx.input.ctrl = modifiers.ctrl;
-        self.ctx.input.shift = modifiers.shift;
-        self.ctx.input.alt = modifiers.alt;
-        self.ctx.input.logo = modifiers.logo;
+        let (ctx, _) = self.keyboard_ctx();
+        ctx.input.ctrl = modifiers.ctrl;
+        ctx.input.shift = modifiers.shift;
+        ctx.input.alt = modifiers.alt;
+        ctx.input.logo = modifiers.logo;
     }
 }
 
 impl Runner {
     fn key(&mut self, event: KeyEvent) {
-        let input = &mut self.ctx.input;
+        let (ctx, dirty) = self.keyboard_ctx();
+        *dirty = true;
+        let input = &mut ctx.input;
         input.presses.push(KeyPress {
             keysym: event.keysym.raw(),
             text: event.utf8.clone(),
@@ -1495,7 +2071,6 @@ impl Runner {
                 }
             }
         }
-        self.dirty = true;
     }
 }
 
@@ -1507,7 +2082,18 @@ impl Runner {
     /// ler o que está nela (Ctrl+V). A leitura é feita no laço de eventos, sem travar:
     /// quem tem o texto pode ser este mesmo app.
     fn clipboard(&mut self) {
-        if let Some(text) = self.ctx.clipboard_out.take() {
+        // Pedidos das janelas filhas: copiar vale igual; colar entrega na filha.
+        let mut paste_for: Option<Option<String>> = std::mem::take(&mut self.ctx.paste_requested).then_some(None);
+        let mut copied_out = self.ctx.clipboard_out.take();
+        for child in &mut self.children {
+            if let Some(text) = child.ctx.clipboard_out.take() {
+                copied_out = Some(text);
+            }
+            if std::mem::take(&mut child.ctx.paste_requested) {
+                paste_for = Some(Some(child.id.clone()));
+            }
+        }
+        if let Some(text) = copied_out {
             if let (Some(manager), Some(device)) = (&self.data_devices, &self.data_device) {
                 let source = manager.create_copy_paste_source(&self.qh, TEXT_MIMES);
                 source.set_selection(device, self.serial);
@@ -1517,12 +2103,15 @@ impl Runner {
                 tracing::debug!("área de transferência: sem dispositivo de dados");
             }
         }
-        if !std::mem::take(&mut self.ctx.paste_requested) {
+        let Some(target) = paste_for else {
             return;
-        }
+        };
         if let Some((_, text)) = &self.copied {
-            self.ctx.input.paste = Some(text.clone());
-            self.dirty = true;
+            let text = text.clone();
+            if let Some((ctx, dirty)) = self.ctx_of(target.as_deref()) {
+                ctx.input.paste = Some(text);
+                *dirty = true;
+            }
             return;
         }
         let Some(offer) = self.data_device.as_ref().and_then(|d| d.data().selection_offer()) else {
@@ -1545,8 +2134,10 @@ impl Runner {
                 match unsafe { file.get_mut() }.read(&mut chunk) {
                     Ok(0) => {
                         tracing::debug!("área de transferência: colado ({} bytes)", bytes.len());
-                        runner.ctx.input.paste = Some(String::from_utf8_lossy(&bytes).into_owned());
-                        runner.dirty = true;
+                        if let Some((ctx, dirty)) = runner.ctx_of(target.as_deref()) {
+                            ctx.input.paste = Some(String::from_utf8_lossy(&bytes).into_owned());
+                            *dirty = true;
+                        }
                         return PostAction::Remove;
                     }
                     Ok(n) => bytes.extend_from_slice(&chunk[..n]),
@@ -1565,7 +2156,13 @@ const DRAG_MIMES: [&str; 2] = ["text/uri-list", "text/plain;charset=utf-8"];
 impl Runner {
     /// Começa o arrasto pedido pelo app (`Ui::start_drag`) com o serial do clique.
     fn start_drag(&mut self) {
-        let Some((uris, icon)) = self.ctx.drag_out.take() else {
+        let mut from = self.ctx.drag_out.take().map(|d| (self.shell.wl_surface().clone(), d));
+        for child in &mut self.children {
+            if let Some(d) = child.ctx.drag_out.take() {
+                from = Some((child.xdg.wl_surface().clone(), d));
+            }
+        }
+        let Some((from_surface, (uris, icon))) = from else {
             return;
         };
         let (Some(manager), Some(device)) = (&self.data_devices, &self.data_device) else {
@@ -1590,10 +2187,13 @@ impl Runner {
             surface.commit();
             Some((surface, buffer))
         });
-        source.start_drag(device, self.shell.wl_surface(), icon.as_ref().map(|(s, _)| s), self.press_serial);
+        source.start_drag(device, &from_surface, icon.as_ref().map(|(s, _)| s), self.press_serial);
         tracing::debug!("arrasto entre apps: {} item(ns)", uris.len());
         // O compositor fica com o ponteiro até soltar: para o app, o botão foi solto.
-        self.ctx.input.down = false;
+        let window = self.window_of(&from_surface).flatten();
+        if let Some((ctx, _)) = self.ctx_of(window.as_deref()) {
+            ctx.input.down = false;
+        }
         self.drag = Some((source, uris, icon));
     }
 
@@ -1604,27 +2204,47 @@ impl Runner {
             }
             self.ctx.input.drag_ended = true;
             self.dirty = true;
+            for child in &mut self.children {
+                child.ctx.input.drag_ended = true;
+                child.dirty = true;
+            }
         }
     }
 
     /// Posição de um arrasto sobre a janela, nas coordenadas do app.
     fn drag_position(&mut self, x: f64, y: f64) {
-        self.ctx.input.pointer = Some((x as f32, y as f32));
-        self.dirty = true;
+        let window = self.drop_on.clone().and_then(|s| self.window_of(&s)).flatten();
+        if let Some((ctx, dirty)) = self.ctx_of(window.as_deref()) {
+            ctx.input.pointer = Some((x as f32, y as f32));
+            *dirty = true;
+        }
+    }
+
+    /// A janela sob o arrasto (a principal se nenhuma filha).
+    fn drop_window(&self) -> Option<String> {
+        self.drop_on.clone().and_then(|s| self.window_of(&s)).flatten()
     }
 }
 
 impl DataDeviceHandler for Runner {
     /// Um arrasto entrou na janela: aceita se trouxer arquivos.
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, device: &WlDataDevice, x: f64, y: f64, _: &wl_surface::WlSurface) {
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, device: &WlDataDevice, x: f64, y: f64, surface: &wl_surface::WlSurface) {
         let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == device).and_then(|d| d.data().drag_offer()) else {
             return;
         };
-        let files = self.accepts_files && offer.with_mime_types(|m| m.iter().any(|t| t == "text/uri-list"));
+        self.drop_on = Some(surface.clone());
+        let window = self.drop_window();
+        let accepts = match &window {
+            None => self.accepts_files,
+            Some(id) => self.children.iter().any(|c| &c.id == id && c.accepts_files),
+        };
+        let files = accepts && offer.with_mime_types(|m| m.iter().any(|t| t == "text/uri-list"));
         if files {
             offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
             offer.set_actions(DndAction::Copy | DndAction::Move, DndAction::Copy);
-            self.ctx.input.drop_hover = true;
+            if let Some((ctx, _)) = self.ctx_of(window.as_deref()) {
+                ctx.input.drop_hover = true;
+            }
         } else {
             offer.accept_mime_type(offer.serial, None);
             offer.set_actions(DndAction::None, DndAction::None);
@@ -1633,9 +2253,13 @@ impl DataDeviceHandler for Runner {
     }
 
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {
-        self.ctx.input.drop_hover = false;
-        self.ctx.input.pointer = None;
-        self.dirty = true;
+        let window = self.drop_window();
+        if let Some((ctx, dirty)) = self.ctx_of(window.as_deref()) {
+            ctx.input.drop_hover = false;
+            ctx.input.pointer = None;
+            *dirty = true;
+        }
+        self.drop_on = None;
     }
 
     fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, x: f64, y: f64) {
@@ -1646,13 +2270,19 @@ impl DataDeviceHandler for Runner {
 
     /// Arquivos soltos na janela: lê a lista (do próprio app, direto) e entrega ao app.
     fn drop_performed(&mut self, _: &Connection, _: &QueueHandle<Self>, device: &WlDataDevice) {
-        self.ctx.input.drop_hover = false;
+        let window = self.drop_window();
+        if let Some((ctx, _)) = self.ctx_of(window.as_deref()) {
+            ctx.input.drop_hover = false;
+        }
         let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == device).and_then(|d| d.data().drag_offer()) else {
             return;
         };
         self.drag_position(offer.x, offer.y);
         if let Some((_, uris, _)) = &self.drag {
-            self.ctx.input.dropped = Some(super::input::parse_uri_list(&uris.join("\n")));
+            let paths = super::input::parse_uri_list(&uris.join("\n"));
+            if let Some((ctx, _)) = self.ctx_of(window.as_deref()) {
+                ctx.input.dropped = Some(paths);
+            }
             offer.finish();
             offer.destroy();
             return;
@@ -1671,8 +2301,10 @@ impl DataDeviceHandler for Runner {
                     Ok(0) => {
                         let paths = super::input::parse_uri_list(&String::from_utf8_lossy(&bytes));
                         tracing::debug!("arrasto entre apps: {} arquivo(s) recebido(s)", paths.len());
-                        runner.ctx.input.dropped = Some(paths);
-                        runner.dirty = true;
+                        if let Some((ctx, dirty)) = runner.ctx_of(window.as_deref()) {
+                            ctx.input.dropped = Some(paths);
+                            *dirty = true;
+                        }
                         offer.finish();
                         offer.destroy();
                         return PostAction::Remove;
@@ -1758,6 +2390,17 @@ impl Dispatch<WpFractionalScaleV1, ()> for Runner {
         // A escala vem em 120 avos (150 = 1,25).
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
             state.set_scale(scale as f32 / 120.0);
+        }
+    }
+}
+
+/// Escala fracionária de uma janela filha (a superfície vem como dado).
+impl Dispatch<WpFractionalScaleV1, wl_surface::WlSurface> for Runner {
+    fn event(state: &mut Self, _: &WpFractionalScaleV1, event: wp_fractional_scale_v1::Event, surface: &wl_surface::WlSurface, _: &Connection, _: &QueueHandle<Self>) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event
+            && let Some(child) = state.children.iter_mut().find(|c| c.xdg.wl_surface() == surface)
+        {
+            child.set_scale(scale as f32 / 120.0);
         }
     }
 }

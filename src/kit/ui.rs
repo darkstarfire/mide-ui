@@ -16,6 +16,9 @@
 
 use std::collections::HashMap;
 
+mod panels;
+pub use panels::{Cursor, Tool};
+
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform};
 
 use super::{
@@ -556,6 +559,9 @@ pub struct Memory {
     /// Controles segmentados: opção mostrada e, se a pílula está deslizando, de onde
     /// ela saiu e quando.
     segments: HashMap<u64, (usize, Option<(usize, std::time::Instant)>)>,
+    /// Divisória arrastada (`Ui::split`): componente, ponto onde o arrasto começou e o
+    /// tamanho do painel nesse momento.
+    split_drag: Option<(u64, f32, f32)>,
 }
 
 /// O que aconteceu na barra de abas (`Ui::tab_bar`).
@@ -673,6 +679,21 @@ pub struct Ctx {
     /// Um clique numa área de arrastar a janela já foi tratado neste quadro (áreas
     /// sobrepostas contariam o mesmo clique duas vezes, como um duplo clique).
     drag_area_handled: bool,
+    /// Ponteiro pedido neste quadro (`Ui::set_cursor`); `None`: a seta.
+    pub cursor: Option<super::Cursor>,
+    /// Janelas filhas que o app pediu para abrir e fechar neste quadro
+    /// (`Ui::open_window`, `Ui::close_window`).
+    pub open_windows: Vec<(String, super::app::Window)>,
+    pub close_windows: Vec<String>,
+    /// Janelas filhas abertas agora (os ids), mantido pela janela.
+    pub windows_open: Vec<String>,
+    /// Este `Ctx` é o de uma janela filha (o id dela); `None` na janela principal.
+    pub window_id: Option<String>,
+    /// A janela inteira é de vidro (`Window::glass`): a janela já pintou o véu.
+    pub window_glass: bool,
+    /// O compositor sabe pôr vidro nesta janela (falso numa janela filha quando ele não
+    /// tem `child_glass`: o vidro dela iria para a principal). Sem isso, tudo opaco.
+    pub glass_allowed: bool,
 }
 
 /// O que o passe da tela principal deixou no `Ctx` e que um passe de outra tela não
@@ -742,7 +763,19 @@ impl Ctx {
             screens: Vec::new(),
             screen: 0,
             reveal: None,
+            cursor: None,
+            open_windows: Vec::new(),
+            close_windows: Vec::new(),
+            windows_open: Vec::new(),
+            window_id: None,
+            window_glass: false,
+            glass_allowed: true,
         }
+    }
+
+    /// Vidro ligado para esta janela: a opção das Configurações e o compositor capaz.
+    pub fn glass_enabled(&self) -> bool {
+        self.glass_allowed && crate::control_client::panel_glass()
     }
 
     /// Começo do passe de outra tela (`screen`, índice em `screens`): guarda o estado
@@ -868,6 +901,7 @@ impl Ctx {
         self.ticking = false;
         self.glass.clear();
         self.glass_capable = false;
+        self.cursor = None;
         // Ícones que ficaram prontos; enquanto houver algum carregando, mais quadros.
         if let Some(done) = &self.icon_done {
             while let Ok((key, icon)) = done.try_recv() {
@@ -1794,7 +1828,7 @@ impl<'a> Ui<'a> {
         // Vidro: o que está atrás (a janela) desfocado; numa camada transparente (área
         // de trabalho), o compositor desfoca o que está atrás dela.
         let frosted = frost_region(self.canvas, rect, radius);
-        if crate::control_client::panel_glass() {
+        if self.ctx.glass_enabled() {
             self.ctx.glass_capable = true;
             self.ctx.glass.push((x, y0, w, h, radius));
         }
@@ -2210,7 +2244,7 @@ impl<'a> Ui<'a> {
     /// Configurações (desligado, o app deve desenhar opaco).
     pub fn glass_behind(&mut self, rect: (f32, f32, f32, f32), radius: f32) -> bool {
         self.ctx.glass_capable = true;
-        let on = crate::control_client::panel_glass();
+        let on = self.ctx.glass_enabled();
         if on {
             self.ctx.glass.push((self.offset.0 + rect.0, self.offset.1 + rect.1, rect.2, rect.3, radius));
         }
@@ -3956,6 +3990,9 @@ impl<'a> Ui<'a> {
                 }
             }
         }
+        if dragged || pointer.is_some_and(|(px, py)| near(px, py).is_some()) {
+            self.set_cursor(Cursor::ResizeHorizontal);
+        }
         let clicked = self.list_header(name, columns, sorted);
         // Linhas finas nas divisórias, como no Finder.
         let mut cx = x0 + width - columns.iter().map(|c| c.1).sum::<f32>();
@@ -4163,6 +4200,12 @@ impl<'a> Ui<'a> {
     /// Tahoe: cada item é (ícone, texto de reserva, marcado, ativo); o marcado ganha
     /// uma pílula dentro da cápsula. Devolve o índice clicado.
     pub fn toolbar_buttons(&mut self, items: &[(&str, &str, bool, bool)]) -> Option<usize> {
+        self.toolbar_buttons_impl(items).0
+    }
+
+    /// `toolbar_buttons` com a resposta de cada botão (para as dicas de `tool_group`).
+    fn toolbar_buttons_impl(&mut self, items: &[(&str, &str, bool, bool)]) -> (Option<usize>, Vec<Response>) {
+        let mut responses = Vec::with_capacity(items.len());
         let t = self.ctx.theme.clone();
         let seg = 40.0;
         let h = super::theme::TOOLBAR_ITEM;
@@ -4173,6 +4216,7 @@ impl<'a> Ui<'a> {
             let id = self.ctx.id();
             let r_rect = (rect.0 + 2.0 + i as f32 * seg, rect.1, seg, h);
             let r = self.interact(id, r_rect);
+            responses.push(r);
             if r.clicked && *enabled {
                 clicked = Some(i);
             }
@@ -4194,7 +4238,7 @@ impl<'a> Ui<'a> {
                 }
             }
         }
-        clicked
+        (clicked, responses)
     }
 
     /// Título da janela na barra de ferramentas do Tahoe (à esquerda, semibold 15),
@@ -4626,7 +4670,7 @@ impl<'a> Ui<'a> {
         // Com o vidro desligado nas Configurações, fica opaca.
         if glass {
             self.ctx.glass_capable = true;
-            if crate::control_client::panel_glass() {
+            if self.ctx.glass_enabled() {
                 if tahoe {
                     crate::ui::draw::clear_rounded(self.canvas, panel.0, panel.1, panel.2, panel.3, panel_r);
                 }
