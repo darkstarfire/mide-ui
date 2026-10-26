@@ -158,10 +158,14 @@ pub struct Menu<'c> {
     y: f32,
     w: f32,
     rows: Vec<MenuRow>,
+    /// Submenu aberto (painel e linhas), desenhado ao lado do menu.
+    children: Vec<((f32, f32, f32, f32), Vec<MenuRow>)>,
+    /// Este é um submenu (o ponteiro nele não fecha a si mesmo).
+    sub: bool,
 }
 
-/// Uma linha do menu: texto, tipo (0 comum, 1 perigo, 2 separador, 3 etiquetas),
-/// se está sob o ponteiro, símbolo, atalho e marca (✓).
+/// Uma linha do menu: texto, tipo (0 comum, 1 perigo, 2 separador, 3 etiquetas,
+/// 4 submenu), se está sob o ponteiro, símbolo, atalho e marca (✓).
 struct MenuRow {
     label: String,
     kind: u8,
@@ -180,6 +184,13 @@ impl Menu<'_> {
         let rect = (self.x, self.y, self.w, h);
         self.y += h;
         let hovered = kind != 2 && self.ctx.input.over(rect);
+        // Ponteiro noutra linha do menu de cima (fora do submenu aberto): fecha o
+        // submenu, como no Mac.
+        if hovered && !self.sub && self.ctx.memory.submenu.is_some() && !self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r)) {
+            self.ctx.memory.submenu = None;
+            self.ctx.memory.submenu_rect = None;
+            self.ctx.repaint = true;
+        }
         self.rows.push(MenuRow {
             label: label.to_string(),
             kind,
@@ -201,6 +212,8 @@ impl Menu<'_> {
     fn close(&mut self) {
         self.ctx.memory.menu = None;
         self.ctx.memory.menu_rect = None;
+        self.ctx.memory.submenu = None;
+        self.ctx.memory.submenu_rect = None;
         self.ctx.repaint = true;
         self.ctx.input.pressed = false;
     }
@@ -233,6 +246,60 @@ impl Menu<'_> {
 
     pub fn separator(&mut self) {
         self.push("", 2, None, None, false);
+    }
+
+    /// Item que abre um submenu ao lado (com a setinha "›"), como "Abrir com" e "Novo
+    /// arquivo" do Finder: o submenu aparece com o ponteiro em cima e os itens dele
+    /// são montados no `build` (só um nível). `icon` é opcional, como em `item_icon`.
+    pub fn submenu(&mut self, icon: Option<&str>, label: &str, build: impl FnOnce(&mut Menu)) {
+        let idx = self.rows.len();
+        let row_y = self.y;
+        let h = 26.0;
+        let rect = (self.x, row_y, self.w, h);
+        self.y += h;
+        let over_row = self.ctx.input.over(rect);
+        if over_row && self.ctx.memory.submenu != Some(idx) {
+            self.ctx.memory.submenu = Some(idx);
+            self.ctx.memory.submenu_rect = None;
+            self.ctx.repaint = true;
+        }
+        let open = self.ctx.memory.submenu == Some(idx);
+        self.rows.push(MenuRow {
+            label: label.to_string(),
+            kind: 4,
+            hovered: over_row || open,
+            icon: icon.map(str::to_string),
+            shortcut: None,
+            checked: false,
+            tags: Vec::new(),
+            tag_hover: None,
+        });
+        if !open || self.sub {
+            return;
+        }
+        // Ao lado do menu (à direita; perto da borda, à esquerda), com o primeiro item
+        // na altura da linha; sem caber embaixo, sobe.
+        let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
+        let cw = 230.0;
+        let outer_right = self.x + self.w + 5.0;
+        let px = if outer_right - 2.0 + cw <= ww - 4.0 { outer_right - 2.0 } else { (self.x - 5.0 - cw + 2.0).max(4.0) };
+        let last_h = self.ctx.memory.submenu_h.max(40.0);
+        let py = (row_y - 5.0).min(wh - last_h - 6.0).max(4.0);
+        let mut child = Menu { ctx: &mut *self.ctx, x: px + 5.0, y: py + 5.0, w: cw - 10.0, rows: Vec::new(), children: Vec::new(), sub: true };
+        build(&mut child);
+        let rows = std::mem::take(&mut child.rows);
+        let ph = child.y - py + 5.0;
+        // Escolheu um item do submenu: o menu todo já fechou.
+        if self.ctx.memory.menu.is_none() {
+            return;
+        }
+        if (ph - self.ctx.memory.submenu_h).abs() > 0.5 {
+            self.ctx.memory.submenu_h = ph;
+            self.ctx.repaint = true;
+        }
+        let panel = (px, py, cw, ph);
+        self.ctx.memory.submenu_rect = Some(panel);
+        self.children.push((panel, rows));
     }
 
     /// Linha das etiquetas do Finder: as bolinhas de `TAG_COLORS` (marcadas com um
@@ -433,6 +500,13 @@ pub struct Memory {
     /// Menu de contexto aberto e o retângulo dele no último quadro (na janela).
     menu: Option<MenuState>,
     menu_rect: Option<(f32, f32, f32, f32)>,
+    /// Submenu aberto (índice da linha no menu), o painel dele e a altura do último
+    /// quadro (para subir quando não cabe embaixo).
+    submenu: Option<usize>,
+    submenu_rect: Option<(f32, f32, f32, f32)>,
+    submenu_h: f32,
+    /// Largura que o menu aberto precisa para os textos caberem (do quadro anterior).
+    menu_auto_w: f32,
     /// O menu abriu neste quadro: o mesmo clique (apertar e soltar no mesmo quadro)
     /// não o fecha como "clique fora".
     menu_just_opened: bool,
@@ -546,6 +620,9 @@ pub struct Ctx {
     pub hide_request: Option<bool>,
     /// Pedido para a camada de fundo subir para a frente das janelas (`Ui::set_raised`).
     pub raise_request: Option<bool>,
+    /// A próxima linha de lista escolhida emenda com a de cima e/ou a de baixo
+    /// (`Ui::join_selection`): só o bloco todo tem os cantos arredondados.
+    pub row_join: (bool, bool),
     /// Tela de bloqueio: a senha foi aceita (`Ui::unlock`).
     pub unlock_request: bool,
     /// Desenhando a cópia da tela de bloqueio de outro monitor, ou outra tela de um app
@@ -627,6 +704,7 @@ impl Ctx {
             input_region: None,
             hide_request: None,
             raise_request: None,
+            row_join: (false, false),
             unlock_request: false,
             mirror: false,
             screens: Vec::new(),
@@ -772,6 +850,8 @@ impl Ctx {
         if self.input.key(Key::Escape) && self.memory.menu.is_some() {
             self.memory.menu = None;
             self.memory.menu_rect = None;
+            self.memory.submenu = None;
+            self.memory.submenu_rect = None;
             self.input.keys.retain(|k| *k != Key::Escape);
             self.repaint = true;
         }
@@ -787,11 +867,14 @@ impl Ctx {
         // Menu aberto: clique fora fecha; se o dono dele sumiu, fecha também.
         if self.memory.menu.is_some() {
             let outside = (self.input.pressed || self.input.secondary)
-                && !self.memory.menu_rect.is_some_and(|r| self.input.over(r));
+                && !self.memory.menu_rect.is_some_and(|r| self.input.over(r))
+                && !self.memory.submenu_rect.is_some_and(|r| self.input.over(r));
             let just_opened = std::mem::take(&mut self.memory.menu_just_opened);
             if !self.memory.menu_drawn || (outside && !self.input.secondary && !just_opened) {
                 self.memory.menu = None;
                 self.memory.menu_rect = None;
+                self.memory.submenu = None;
+                self.memory.submenu_rect = None;
                 self.repaint = true;
             }
         }
@@ -962,7 +1045,7 @@ impl<'a> Ui<'a> {
     /// Clique: apertou neste componente e soltou em cima dele.
     fn interact(&mut self, id: u64, rect: (f32, f32, f32, f32)) -> Response {
         // Com um menu aberto, o que está debaixo dele não reage.
-        let under_menu = self.ctx.memory.menu_rect.is_some_and(|r| self.ctx.input.over(r));
+        let under_menu = self.ctx.memory.menu_rect.is_some_and(|r| self.ctx.input.over(r)) || self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r));
         // Com um modal aberto, só o que está dentro dele reage.
         let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
         // Numa área que rola, só a parte à vista recebe o ponteiro (um item escondido
@@ -998,7 +1081,7 @@ impl<'a> Ui<'a> {
         if self.ctx.hover_claimed {
             return Response { rect, id, ..Default::default() };
         }
-        let under_menu = self.ctx.memory.menu_rect.is_some_and(|r| self.ctx.input.over(r));
+        let under_menu = self.ctx.memory.menu_rect.is_some_and(|r| self.ctx.input.over(r)) || self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r));
         let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
         let hovered = !under_menu && !blocked && self.over(rect);
         Response {
@@ -1014,7 +1097,9 @@ impl<'a> Ui<'a> {
     /// Cor da seleção: o destaque com a janela em foco e cinza sem foco, como no Mac.
     fn selection_fill(&self) -> Rgba {
         let t = &self.ctx.theme;
-        if self.ctx.input.window_active() { t.accent } else { t.shade(if t.dark { 50 } else { 30 }) }
+        // Seleção como a do Finder: o tom da cor de destaque mais fundo e saturado
+        // (o azul vira um azul forte); sem foco, cinza.
+        if self.ctx.input.window_active() { selection_tone(t.accent) } else { t.shade(if t.dark { 50 } else { 30 }) }
     }
 
     /// Os três botões da janela (fechar, minimizar, maximizar), com o canto de cima à
@@ -1585,6 +1670,9 @@ impl<'a> Ui<'a> {
                 let opened = crate::settings_file::effect("menu_animation").then(std::time::Instant::now);
                 self.ctx.memory.menu = Some(MenuState { owner: response.id, pos, click, height: 0.0, item_top, opened });
                 self.ctx.memory.menu_rect = None;
+                self.ctx.memory.submenu = None;
+                self.ctx.memory.submenu_rect = None;
+                self.ctx.memory.menu_auto_w = 0.0;
                 self.ctx.memory.menu_just_opened = true;
                 self.ctx.repaint = true;
             }
@@ -1593,18 +1681,19 @@ impl<'a> Ui<'a> {
             return;
         };
         self.ctx.memory.menu_drawn = true;
-        let t = self.ctx.theme.clone();
         let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
         // Largura padrão, ou a pedida pela lista suspensa (cabe o nome mais longo).
-        let w = self.ctx.memory.menu_width.take().unwrap_or(220.0).clamp(220.0, (ww - 16.0).max(220.0));
+        // O menu cresce até o texto mais longo caber (como no Mac), até 420.
+        let auto = self.ctx.memory.menu_auto_w.min(420.0);
+        let w = self.ctx.memory.menu_width.take().unwrap_or(220.0).max(auto).clamp(220.0, (ww - 16.0).max(220.0));
         // A ponta do menu fica no ponto do clique (como os menus da dock e da barra):
         // o menu abre para baixo, ou para cima se não couber, e um pouco à esquerda.
         // Sem espaço em cima nem embaixo do item, abre ao lado do clique (à direita, ou
         // à esquerda perto da borda), com a ponta na lateral apontando para o item.
         let MenuPlace { x, y: y0, side, up } = menu_place(&state, w, (ww, wh));
-        let mut menu = Menu { ctx: &mut *self.ctx, x: x + 5.0, y: y0 + 5.0, w: w - 10.0, rows: Vec::new() };
+        let mut menu = Menu { ctx: &mut *self.ctx, x: x + 5.0, y: y0 + 5.0, w: w - 10.0, rows: Vec::new(), children: Vec::new(), sub: false };
         build(&mut menu);
-        let (rows, end) = (std::mem::take(&mut menu.rows), menu.y);
+        let (rows, end, children) = (std::mem::take(&mut menu.rows), menu.y, std::mem::take(&mut menu.children));
         let still_open = self.ctx.memory.menu.is_some();
         let h = end - y0 + 5.0;
         if !still_open {
@@ -1614,30 +1703,76 @@ impl<'a> Ui<'a> {
             m.height = h;
         }
         self.ctx.memory.menu_rect = Some((x, y0, w, h));
+        // Largura que os textos pedem (com símbolo, atalho e setinha): vale no próximo
+        // quadro.
+        let t = self.ctx.theme.clone();
+        let indent = rows.iter().any(|r| r.icon.is_some() || r.checked);
+        let need = rows
+            .iter()
+            .filter(|r| r.kind != 2 && r.kind != 3)
+            .map(|r| {
+                let label = self.ctx.text.measure(&r.label, t.font, FontWeight::Regular);
+                let extra = r.shortcut.as_ref().map(|sc| self.ctx.text.measure(sc, t.font, FontWeight::Regular) + 24.0).unwrap_or(if r.kind == 4 { 26.0 } else { 0.0 });
+                label + extra + if indent { 52.0 } else { 32.0 }
+            })
+            .fold(0.0, f32::max);
+        if need > w + 0.5 && (need - self.ctx.memory.menu_auto_w).abs() > 0.5 {
+            self.ctx.memory.menu_auto_w = need;
+            self.ctx.repaint = true;
+        }
+        if children.is_empty() && self.ctx.memory.submenu.is_none() {
+            self.ctx.memory.submenu_rect = None;
+        }
+        let _ = (side, up);
+        self.paint_menu((x, y0, w, h), &rows);
+        for (panel, rows) in &children {
+            self.paint_menu(*panel, rows);
+        }
+    }
+
+    /// Desenha um painel de menu na camada de cima: vidro desfocado (o conteúdo da
+    /// janela atrás dele, borrado e clareado, como os menus do Mac), sombra, borda de
+    /// luz e as linhas.
+    fn paint_menu(&mut self, rect: (f32, f32, f32, f32), rows: &[MenuRow]) {
+        let t = self.ctx.theme.clone();
+        let (x, y0, w, h) = rect;
+        let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
         // Com algum símbolo ou marca no menu, todos os textos alinham depois deles.
         let indent = rows.iter().any(|r| r.icon.is_some() || r.checked);
         let text_x = if indent { x + 36.0 } else { x + 16.0 };
         // Textos que não cabem (nome de arquivo comprido) terminam com "…" antes do
-        // atalho e da borda, sem passar do menu.
+        // atalho, da setinha e da borda, sem passar do menu.
         let fitted: Vec<String> = rows
             .iter()
             .map(|row| {
-                let sc = row.shortcut.as_ref().map(|sc| self.ctx.text.measure(sc, t.font, FontWeight::Regular) + 12.0).unwrap_or(0.0);
+                let sc = row.shortcut.as_ref().map(|sc| self.ctx.text.measure(sc, t.font, FontWeight::Regular) + 12.0).unwrap_or(if row.kind == 4 { 18.0 } else { 0.0 });
                 let max = (x + w - 14.0 - sc - text_x).max(10.0);
                 self.fit(&row.label, t.font, FontWeight::Regular, max)
             })
             .collect();
-        // Desenho na camada de cima.
         let k = crate::ui::draw::scale();
-        let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
-        // Tahoe: vidro de cantos 12, sem a setinha; destaque em pílula de 8.
         let radius = 12.0;
-        for (grow, alpha) in [(6.0, 12u8), (3.0, 20), (1.0, 32)] {
-            fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, radius + grow, color([0, 0, 0, alpha]));
+        // Sombra suave.
+        {
+            let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
+            for (grow, alpha) in [(6.0, 12u8), (3.0, 20), (1.0, 32)] {
+                fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, radius + grow, color([0, 0, 0, alpha]));
+            }
         }
-        fill_rounded(overlay, x, y0, w, h, radius, color(t.menu));
+        // Vidro: o que está atrás (a janela) desfocado; numa camada transparente (área
+        // de trabalho), o compositor desfoca o que está atrás dela.
+        let frosted = frost_region(self.canvas, rect, radius);
+        if crate::control_client::panel_glass() {
+            self.ctx.glass_capable = true;
+            self.ctx.glass.push((x, y0, w, h, radius));
+        }
+        let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
+        if let Some((pix, px, py)) = frosted {
+            paint_pattern_rounded(overlay, &pix, px, py, rect, radius);
+        }
+        let veil = if t.dark { [40, 40, 44, 175] } else { [248, 248, 250, 165] };
+        fill_rounded(overlay, x, y0, w, h, radius, color(veil));
         outline(overlay, (x, y0, w, h), radius, if t.dark { [255, 255, 255, 30] } else { [0, 0, 0, 16] });
-        let _ = (side, up);
         let mut y = y0 + 5.0;
         let mut icons = Vec::new();
         for (i, row) in rows.iter().enumerate() {
@@ -1680,14 +1815,32 @@ impl<'a> Ui<'a> {
                         let sw = self.ctx.text.measure(sc, t.font, FontWeight::Regular);
                         self.ctx.text.draw(overlay, sc, x + w - 14.0 - sw, y + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, sc_c);
                     }
+                    if kind == 4 {
+                        // Setinha do submenu.
+                        let (cx, cy) = (x + w - 16.0, y + 13.0);
+                        let mut pb = PathBuilder::new();
+                        pb.move_to(cx - 2.5, cy - 4.5);
+                        pb.line_to(cx + 2.0, cy);
+                        pb.line_to(cx - 2.5, cy + 4.5);
+                        if let Some(path) = pb.finish() {
+                            let mut paint = Paint { anti_alias: true, ..Default::default() };
+                            paint.set_color(color(if row.hovered { t.on_accent } else { t.text_secondary }));
+                            overlay.stroke_path(&path, &paint, &Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, ..Default::default() }, crate::ui::draw::tf(), None);
+                        }
+                    }
                     y += 26.0;
                 }
             }
         }
+        // Ícones de apps (coloridos) não são tingidos; símbolos (-symbolic) sim.
         for (icon, ix, iy, c) in icons {
             if let Some(pix) = self.ctx.icon(&[icon.as_str()], 16, false) {
                 if let Some(overlay) = self.ctx.overlay.as_mut() {
-                    crate::ui::draw::blit_tinted(overlay, &pix, ix as i32, iy as i32, [c[0], c[1], c[2]]);
+                    if icon.ends_with("-symbolic") {
+                        crate::ui::draw::blit_tinted(overlay, &pix, ix as i32, iy as i32, [c[0], c[1], c[2]]);
+                    } else {
+                        crate::ui::draw::blit(overlay, &pix, ix as i32, iy as i32, 1.0);
+                    }
                 }
             }
         }
@@ -2108,6 +2261,22 @@ impl<'a> Ui<'a> {
     /// Esconde a superfície (sem fechar o app) ou mostra de novo.
     pub fn set_hidden(&mut self, hidden: bool) {
         self.ctx.hide_request = Some(hidden);
+    }
+
+    /// Antes de uma linha de lista escolhida (`tree_row`, `list_row`): a de cima
+    /// (`above`) e a de baixo (`below`) também estão escolhidas. As linhas seguidas
+    /// viram um bloco só, com os cantos arredondados só em cima da primeira e embaixo
+    /// da última, como no Finder. Vale só para a próxima linha.
+    pub fn join_selection(&mut self, above: bool, below: bool) {
+        self.ctx.row_join = (above, below);
+    }
+
+    /// Fundo de uma linha escolhida, emendando com as vizinhas (`join_selection`).
+    fn selected_row_fill(&mut self, rect: (f32, f32, f32, f32)) {
+        let (above, below) = std::mem::take(&mut self.ctx.row_join);
+        let r = super::theme::RADIUS_ITEM;
+        let fill = color(self.selection_fill());
+        crate::ui::draw::fill_rounded_tb(self.canvas, rect.0, rect.1, rect.2, rect.3, if above { 0.0 } else { r }, if below { 0.0 } else { r }, fill);
     }
 
     /// Camada de fundo (`Window::desktop`): com `true`, sobe para a frente das janelas
@@ -3439,7 +3608,9 @@ impl<'a> Ui<'a> {
         // Nome claro: ladrilho sobre o papel de parede (área de trabalho).
         let on_wallpaper = (t.tile_text[0] as u32 + t.tile_text[1] as u32 + t.tile_text[2] as u32) > 600;
         if selected && on_wallpaper {
-            crate::ui::draw::glass(self.canvas, ix - 8.0, iy - 6.0, fw + 16.0, fh + 12.0, 10.0);
+            // Como na mesa do Mac: quadrado escuro translúcido com uma borda clara fina.
+            fill_rounded(self.canvas, ix - 7.0, iy - 5.0, fw + 14.0, fh + 10.0, 8.0, color([0, 0, 0, 72]));
+            outline(self.canvas, (ix - 7.0, iy - 5.0, fw + 14.0, fh + 10.0), 8.0, [255, 255, 255, 90]);
         } else if selected {
             // Como no Finder: fundo cinza arredondado atrás do ícone.
             fill_rounded(self.canvas, ix - 6.0, iy - 5.0, fw + 12.0, fh + 10.0, super::theme::RADIUS_ITEM, color(t.shade(if t.dark { 46 } else { 26 })));
@@ -3478,9 +3649,6 @@ impl<'a> Ui<'a> {
         let c = if selected && self.ctx.input.window_active() { t.on_accent } else { t.tile_text };
         let light = (t.tile_text[0] as u32 + t.tile_text[1] as u32 + t.tile_text[2] as u32) > 600;
         let widths: Vec<f32> = shown.iter().map(|l| self.measure(l, t.font_small, FontWeight::Regular)).collect();
-        let lw = widths.iter().cloned().fold(0.0, f32::max);
-        let block = (rect.0 + (w - lw) / 2.0 - 6.0, ly - 1.0, lw + 12.0, shown.len() as f32 * lh + 2.0);
-        let radius = (block.3 / 2.0).min(8.0);
         let fill = self.selection_fill();
         // Mais de duas linhas (escolhido): na camada de cima, para não ficar embaixo
         // dos ícones vizinhos.
@@ -3489,15 +3657,22 @@ impl<'a> Ui<'a> {
             let k = crate::ui::draw::scale();
             let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
             let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
-            fill_rounded(overlay, ox + block.0, oy + block.1, block.2, block.3, radius, color(fill));
+            for (i, lw) in widths.iter().enumerate() {
+                let lx = rect.0 + (w - lw) / 2.0;
+                fill_rounded(overlay, ox + lx - 5.0, oy + ly + i as f32 * lh - 1.0, lw + 10.0, lh + 1.0, 4.0, color(fill));
+            }
             for (i, line) in shown.iter().enumerate() {
                 let lx = rect.0 + (w - widths[i]) / 2.0;
                 self.ctx.text.draw(overlay, line, ox + lx, oy + ly + i as f32 * lh, t.font_small, FontWeight::Regular, c);
             }
             return r;
         }
+        // Escolhido: cada linha do nome na sua cápsula azul (como no Finder e na mesa).
         if selected {
-            fill_rounded(self.canvas, block.0, block.1, block.2, block.3, radius, color(fill));
+            for (i, lw) in widths.iter().enumerate() {
+                let lx = rect.0 + (w - lw) / 2.0;
+                fill_rounded(self.canvas, lx - 5.0, ly + i as f32 * lh - 1.0, lw + 10.0, lh + 1.0, 4.0, color(fill));
+            }
         }
         for (i, line) in shown.iter().enumerate() {
             let lx = rect.0 + (w - widths[i]) / 2.0;
@@ -3758,7 +3933,7 @@ impl<'a> Ui<'a> {
             return (r, toggled);
         }
         if selected {
-            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(self.selection_fill()));
+            self.selected_row_fill(rect);
         } else if striped {
             fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(t.shade(10)));
         }
@@ -3816,7 +3991,7 @@ impl<'a> Ui<'a> {
             return r;
         }
         if selected {
-            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(self.selection_fill()));
+            self.selected_row_fill(rect);
         } else if r.hovered {
             fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(t.hover));
         }
@@ -4634,6 +4809,90 @@ fn knob(canvas: &mut Pixmap, rect: (f32, f32, f32, f32)) {
     fill_rounded(canvas, x - 0.5, y + 0.5, w + 1.0, h + 1.5, r + 0.5, color([0, 0, 0, 28]));
     fill_rounded(canvas, x, y, w, h, r, color([255, 255, 255, 255]));
     outline(canvas, rect, r, [0, 0, 0, 22]);
+}
+
+/// Tom da seleção de listas e ícones a partir da cor de destaque: mais escuro nos
+/// canais fracos, guardando o forte (azul 10,110,235 → 8,83,216).
+pub fn selection_tone(c: Rgba) -> Rgba {
+    let max = c[0].max(c[1]).max(c[2]);
+    let f = |v: u8| if v == max { (v as f32 * 0.92) as u8 } else { (v as f32 * 0.75) as u8 };
+    [f(c[0]), f(c[1]), f(c[2]), c[3]]
+}
+
+/// Copia o pedaço `rect` (em pontos) da tela da janela e desfoca (três passadas de
+/// média, raio de uns 14 pontos), para o vidro de menus e popovers. Devolve a imagem
+/// desfocada e o canto dela, em pixels.
+fn frost_region(canvas: &Pixmap, rect: (f32, f32, f32, f32), _radius: f32) -> Option<(Pixmap, i32, i32)> {
+    let k = crate::ui::draw::scale();
+    let (cw, ch) = (canvas.width() as i32, canvas.height() as i32);
+    let x0 = ((rect.0 * k).floor() as i32).clamp(0, cw);
+    let y0 = ((rect.1 * k).floor() as i32).clamp(0, ch);
+    let x1 = (((rect.0 + rect.2) * k).ceil() as i32).clamp(0, cw);
+    let y1 = (((rect.1 + rect.3) * k).ceil() as i32).clamp(0, ch);
+    let (w, h) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    if w < 2 || h < 2 {
+        return None;
+    }
+    let src = canvas.data();
+    let mut buf = vec![0u8; w * h * 4];
+    for row in 0..h {
+        let from = (((y0 as usize + row) * cw as usize) + x0 as usize) * 4;
+        buf[row * w * 4..(row + 1) * w * 4].copy_from_slice(&src[from..from + w * 4]);
+    }
+    let r = ((14.0 * k / 3.0).round() as usize).max(1);
+    for _ in 0..3 {
+        box_blur(&mut buf, w, h, r, true);
+        box_blur(&mut buf, w, h, r, false);
+    }
+    let mut pix = Pixmap::new(w as u32, h as u32)?;
+    pix.data_mut().copy_from_slice(&buf);
+    Some((pix, x0, y0))
+}
+
+/// Uma passada de média deslizante (horizontal ou vertical) com raio `r`, nas bordas
+/// repetindo o último pixel. Em RGBA pré-multiplicado.
+fn box_blur(buf: &mut [u8], w: usize, h: usize, r: usize, horizontal: bool) {
+    let (len, lines) = if horizontal { (w, h) } else { (h, w) };
+    let idx = |line: usize, i: usize| if horizontal { (line * w + i) * 4 } else { (i * w + line) * 4 };
+    let span = (2 * r + 1) as u32;
+    let mut line_buf = vec![0u8; len * 4];
+    for line in 0..lines {
+        for i in 0..len {
+            let p = idx(line, i);
+            line_buf[i * 4..i * 4 + 4].copy_from_slice(&buf[p..p + 4]);
+        }
+        let mut sum = [0u32; 4];
+        let at = |i: isize| -> usize { i.clamp(0, len as isize - 1) as usize };
+        for j in -(r as isize)..=(r as isize) {
+            let q = at(j) * 4;
+            for c in 0..4 {
+                sum[c] += line_buf[q + c] as u32;
+            }
+        }
+        for i in 0..len {
+            let p = idx(line, i);
+            for c in 0..4 {
+                buf[p + c] = (sum[c] / span) as u8;
+            }
+            let out = at(i as isize - r as isize) * 4;
+            let inn = at(i as isize + r as isize + 1) * 4;
+            for c in 0..4 {
+                sum[c] = sum[c] + line_buf[inn + c] as u32 - line_buf[out + c] as u32;
+            }
+        }
+    }
+}
+
+/// Pinta a imagem `pix` (canto em `px`, `py`, em pixels) recortada no retângulo
+/// arredondado `rect` (em pontos).
+fn paint_pattern_rounded(dst: &mut Pixmap, pix: &Pixmap, px: i32, py: i32, rect: (f32, f32, f32, f32), radius: f32) {
+    let k = crate::ui::draw::scale();
+    let Some(path) = crate::ui::draw::rounded_rect(rect.0 * k, rect.1 * k, rect.2 * k, rect.3 * k, radius * k) else {
+        return;
+    };
+    let shader = tiny_skia::Pattern::new(pix.as_ref(), tiny_skia::SpreadMode::Pad, tiny_skia::FilterQuality::Nearest, 1.0, Transform::from_translate(px as f32, py as f32));
+    let paint = Paint { shader, anti_alias: true, ..Default::default() };
+    dst.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
 }
 
 /// Contorno fino de 1 pt dentro do retângulo arredondado.

@@ -51,6 +51,37 @@ pub fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia:
     pb.finish()
 }
 
+/// Retângulo com os cantos de cima arredondados em `top` e os de baixo em `bottom`
+/// (seleção contínua de várias linhas de uma lista: um bloco só).
+pub fn rounded_rect_tb(x: f32, y: f32, w: f32, h: f32, top: f32, bottom: f32) -> Option<tiny_skia::Path> {
+    const K: f32 = 0.5523;
+    let t = top.min(w / 2.0).min(h / 2.0).max(0.0);
+    let b = bottom.min(w / 2.0).min(h / 2.0).max(0.0);
+    let mut pb = PathBuilder::new();
+    pb.move_to(x + t, y);
+    pb.line_to(x + w - t, y);
+    pb.cubic_to(x + w - t + t * K, y, x + w, y + t - t * K, x + w, y + t);
+    pb.line_to(x + w, y + h - b);
+    pb.cubic_to(x + w, y + h - b + b * K, x + w - b + b * K, y + h, x + w - b, y + h);
+    pb.line_to(x + b, y + h);
+    pb.cubic_to(x + b - b * K, y + h, x, y + h - b + b * K, x, y + h - b);
+    pb.line_to(x, y + t);
+    pb.cubic_to(x, y + t - t * K, x + t - t * K, y, x + t, y);
+    pb.close();
+    pb.finish()
+}
+
+/// Preenche um retângulo com raios diferentes em cima e embaixo ([`rounded_rect_tb`]).
+#[allow(clippy::too_many_arguments)]
+pub fn fill_rounded_tb(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, top: f32, bottom: f32, color: Color) {
+    if let Some(path) = rounded_rect_tb(x, y, w, h, top, bottom) {
+        let mut paint = Paint::default();
+        paint.set_color(color);
+        paint.anti_alias = true;
+        pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
+    }
+}
+
 /// Preenche um retângulo arredondado com uma cor.
 pub fn fill_rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, color: Color) {
     if let Some(path) = rounded_rect(x, y, w, h, r) {

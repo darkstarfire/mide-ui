@@ -493,3 +493,25 @@ O mide-ui segue os conceitos do AppKit do macOS, para que uma camada de compatib
 | `columns`, `form_row`, `fixed_label` | `NSStackView`, `NSGridView` (formulário com rótulos alinhados) |
 
 Regra: todo componente novo do kit ganha aqui a linha do equivalente no AppKit.
+
+
+## Menus: vidro, submenus e largura
+
+Os menus de contexto (`ui.context_menu`) são de vidro, como no Tahoe: o conteúdo da
+janela atrás deles aparece desfocado e clareado (numa camada transparente, como a área
+de trabalho, o compositor desfoca o que está atrás). A largura cresce até o texto mais
+longo caber. `m.submenu(ícone, "Abrir com", |m| { ... })` abre um submenu ao lado, com
+a setinha "›", quando o ponteiro passa em cima (um nível).
+
+## Seleção em bloco
+
+Antes de cada linha escolhida de `tree_row`/`list_row`, `ui.join_selection(acima,
+abaixo)` diz se as vizinhas também estão escolhidas: linhas seguidas viram um bloco só,
+com os cantos arredondados só em cima da primeira e embaixo da última (como no Finder).
+O azul da seleção é o tom mais forte da cor de destaque (`selection_tone`).
+
+## Receber arquivos arrastados
+
+`Window::accepts_files()` faz a janela aceitar arquivos arrastados de outros apps: o
+compositor mostra o ponteiro de "copiar" sobre ela e os caminhos chegam em
+`input().dropped`. Janelas sem isso deixam o arrasto passar (a seta comum).

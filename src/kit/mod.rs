@@ -42,7 +42,7 @@ mod ui;
 
 pub use app::{run, App, Waker, Window};
 pub use chooser::{Choice, ExtraChoice, FileChooser, Filter, Pattern};
-pub use input::{Input, Key, KeyPress};
+pub use input::{parse_uri_list, Input, Key, KeyPress};
 pub use menubar::{window_menu, MenuGroup, MenuItem};
 pub use picker::{ListPicker, PickGroup, PickItem, Picked};
 pub use screens::Screen;

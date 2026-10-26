@@ -105,6 +105,8 @@ pub struct Window {
     pub native_scale: bool,
     /// Uma camada em cada tela (`Window::on_every_output`).
     pub every_output: bool,
+    /// Recebe arquivos arrastados de outros apps (`Window::accepts_files`).
+    pub accepts_files: bool,
     /// Camada pequena no canto de baixo à direita da tela principal (`Window::corner`).
     pub corner: bool,
     /// Janela de conteúdo inteiro, no estilo do Tahoe (`Window::full_size_content`).
@@ -129,6 +131,7 @@ impl Window {
             lock: false,
             native_scale: true,
             every_output: false,
+            accepts_files: false,
             corner: false,
             full_size: false,
             fixed: false,
@@ -161,6 +164,15 @@ impl Window {
     /// [`Ui::pointer_global`](super::Ui::pointer_global). Só a principal recebe o
     /// teclado. As outras telas desenham em escala 1 (o compositor amplia). Monitores
     /// que entram e saem ganham e perdem a camada com o app aberto.
+    /// A janela recebe arquivos arrastados (de outro app ou dela mesma): o arrasto é
+    /// aceito (o compositor mostra o ponteiro de "copiar") e os caminhos chegam em
+    /// `input().dropped`. Sem isso, um arrasto de arquivos passa reto pela janela
+    /// (a seta comum, nada é entregue). Para apps que abrem ou guardam arquivos.
+    pub fn accepts_files(mut self) -> Self {
+        self.accepts_files = true;
+        self
+    }
+
     pub fn on_every_output(mut self) -> Self {
         self.every_output = true;
         self
@@ -418,6 +430,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         compositor,
         hidden: false,
         raised: false,
+        accepts_files: window.accepts_files,
         others_drawn: None,
         test_hide: std::env::var_os("MIDE_KIT_TEST_HIDE").map(|_| None),
         every_output: window.every_output && layer_shell_kept.is_some() && !window.desktop && !window.dropdown && !window.corner,
@@ -593,6 +606,8 @@ struct Runner {
     hidden: bool,
     /// Camada de fundo trazida para a frente (`Ui::set_raised`).
     raised: bool,
+    /// Aceita arquivos arrastados (`Window::accepts_files`).
+    accepts_files: bool,
     /// Quando as telas de bloqueio dos outros monitores foram desenhadas, e os tamanhos.
     others_drawn: Option<(std::time::Instant, Vec<(u32, u32)>)>,
     /// Teste de esconder e mostrar (`MIDE_KIT_TEST_HIDE`): quando a janela apareceu.
@@ -1605,13 +1620,14 @@ impl DataDeviceHandler for Runner {
         let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == device).and_then(|d| d.data().drag_offer()) else {
             return;
         };
-        let files = offer.with_mime_types(|m| m.iter().any(|t| t == "text/uri-list"));
+        let files = self.accepts_files && offer.with_mime_types(|m| m.iter().any(|t| t == "text/uri-list"));
         if files {
             offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
             offer.set_actions(DndAction::Copy | DndAction::Move, DndAction::Copy);
             self.ctx.input.drop_hover = true;
         } else {
             offer.accept_mime_type(offer.serial, None);
+            offer.set_actions(DndAction::None, DndAction::None);
         }
         self.drag_position(x, y);
     }
