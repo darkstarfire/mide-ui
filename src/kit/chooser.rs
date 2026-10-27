@@ -323,7 +323,8 @@ impl FileChooser {
         }
         let mut action: Option<Action> = None;
         let (ww, wh) = ui.window_size();
-        let width = if self.embedded { ww } else { (ww - 48.0).clamp(420.0, 820.0) };
+        // Compacto, como o painel de abrir do Mac (a janela do app continua à vista).
+        let width = if self.embedded { ww } else { (ww - 48.0).clamp(420.0, 700.0) };
         let row = ui.theme().row + ui.theme().spacing;
         // Linhas embaixo da lista: filtros, opções, aviso, nova pasta e botões.
         let extra = (self.filters.len() > 1) as usize as f32 * row
@@ -332,7 +333,7 @@ impl FileChooser {
             + self.message.is_some() as usize as f32 * 24.0
             + self.new_folder.is_some() as usize as f32 * row;
         let top_rows = if self.mode == Mode::Save { row } else { 0.0 };
-        let list_h = (wh * 0.72 - 150.0 - extra - top_rows).clamp(160.0, 420.0);
+        let list_h = (wh * 0.6 - 150.0 - extra - top_rows).clamp(160.0, 320.0);
         let title = self.title.clone();
         let (ctrl, shift) = (ui.input().ctrl, ui.input().shift);
         let embedded = self.embedded;
@@ -502,7 +503,7 @@ impl FileChooser {
         if embedded {
             ui.page(body);
         } else {
-            ui.modal(width, body);
+            ui.modal_centered(width, body);
         }
         if action.is_none() && esc && self.new_folder.is_some() {
             self.new_folder = None;

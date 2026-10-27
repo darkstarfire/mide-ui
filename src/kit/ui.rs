@@ -1397,6 +1397,16 @@ impl<'a> Ui<'a> {
     /// }
     /// ```
     pub fn modal(&mut self, width: f32, add: impl FnOnce(&mut Ui)) -> (f32, f32, f32, f32) {
+        self.modal_at(width, false, add)
+    }
+
+    /// Como `modal`, no meio da janela (o painel de abrir/salvar arquivos, como no Mac;
+    /// os avisos ficam no terço de cima).
+    pub fn modal_centered(&mut self, width: f32, add: impl FnOnce(&mut Ui)) -> (f32, f32, f32, f32) {
+        self.modal_at(width, true, add)
+    }
+
+    fn modal_at(&mut self, width: f32, centered: bool, add: impl FnOnce(&mut Ui)) -> (f32, f32, f32, f32) {
         let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
         let mut dim = Paint::default();
         dim.set_color(color([0, 0, 0, 56]));
@@ -1404,7 +1414,19 @@ impl<'a> Ui<'a> {
             self.canvas.fill_rect(r, &dim, crate::ui::draw::tf(), None);
         }
         let width = width.min(ww - 32.0);
-        let (x, y) = (((ww - width) / 2.0).round(), (wh * 0.24).round());
+        // No meio: a altura vem do quadro anterior (no primeiro, uma estimativa e outro
+        // quadro logo em seguida, já centrado).
+        let y = match self.ctx.memory.modal_rect {
+            Some(prev) if centered && (prev.2 - width).abs() < 0.5 => ((wh - prev.3) / 2.0).max(16.0),
+            _ => {
+                if centered {
+                    self.ctx.repaint = true;
+                }
+                wh * 0.24
+            }
+        }
+        .round();
+        let x = ((ww - width) / 2.0).round();
         self.ctx.in_modal = true;
         // Tahoe: cantos grandes nos diálogos.
         let rect = self.glass_panel(x, y, width, 20.0, add);
@@ -4134,13 +4156,21 @@ impl<'a> Ui<'a> {
         } else if r.hovered {
             fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(t.hover));
         }
+        let on_pill = selected && self.ctx.input.window_active();
         let pix = self.ctx.icon(&[icon, "text-x-generic"], 20, false);
         if let Some(pix) = pix {
-            crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 8.0) as i32, (rect.1 + 4.0) as i32, 1.0);
+            if icon.ends_with("-symbolic") {
+                // Símbolos (os lugares da barra lateral) na cor de destaque, como no
+                // Finder; brancos na linha escolhida. Sem isso, saíam pretos no escuro.
+                let c = if on_pill { t.on_accent } else { t.accent };
+                crate::ui::draw::blit_tinted(self.canvas, &pix, (rect.0 + 8.0) as i32, (rect.1 + 4.0) as i32, [c[0], c[1], c[2]]);
+            } else {
+                crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 8.0) as i32, (rect.1 + 4.0) as i32, 1.0);
+            }
         }
         let cols: f32 = columns.iter().map(|c| c.1).sum();
         let ty = rect.1 + (28.0 - t.font * 1.25) / 2.0;
-        let (main, side) = if selected && self.ctx.input.window_active() { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
+        let (main, side) = if on_pill { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
         let shown = self.fit(label, t.font, FontWeight::Regular, (rect.2 - 40.0 - cols).max(0.0));
         self.draw_text(&shown, rect.0 + 36.0, ty, t.font, FontWeight::Regular, main);
         if shown != label {
