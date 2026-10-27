@@ -178,6 +178,13 @@ pub fn system_accent(dark: bool) -> Rgba {
     [c[0], c[1], c[2], 255]
 }
 
+/// Barras de rolagem sempre à mostra (`[appearance] scrollbars = "always"`, como a
+/// opção de acessibilidade do macOS). O padrão (`"auto"`) mostra a barra só ao rolar
+/// ou com o ponteiro perto dela. Em nenhum dos dois ela reserva espaço no layout.
+pub fn scrollbars_always() -> bool {
+    matches!(crate::settings_file::cached("appearance", "scrollbars"), Some(crate::settings_file::Value::Text(s)) if s == "always")
+}
+
 /// O tema da sessão é o escuro. No mide, a escolha das Configurações; fora dele, a do
 /// sistema (portal do freedesktop, `color-scheme`: GNOME, KDE e outros).
 pub fn system_dark() -> bool {

@@ -40,6 +40,10 @@ pub const LAUNCHER_POP: Duration = Duration::from_millis(340);
 pub const WALLPAPER_FADE: Duration = Duration::from_millis(450);
 /// Pílula do controle segmentado deslizando até a opção nova (Tahoe).
 pub const CONTROL_SLIDE: Duration = Duration::from_millis(200);
+/// Barra de rolagem que se sobrepõe ao conteúdo (como no macOS): fica à mostra
+/// `SCROLLBAR_HOLD` depois do último movimento e some esmaecendo em `SCROLLBAR_FADE`.
+pub const SCROLLBAR_HOLD: Duration = Duration::from_millis(1000);
+pub const SCROLLBAR_FADE: Duration = Duration::from_millis(300);
 /// Lâmpada (minimizar e restaurar).
 pub const GENIE: Duration = Duration::from_millis(650);
 

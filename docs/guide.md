@@ -177,7 +177,11 @@ Os componentes se empilham de cima para baixo, ocupando a largura disponível.
 - **`ui.card(|ui| ...)`**: agrupa num cartão branco; os itens dentro ganham linhas finas
   entre si, como nas Configurações.
 - **`ui.page(|ui| ...)`**: área com margem que rola quando o conteúdo não cabe, com a
-  barra de rolagem fina (que aparece só quando precisa e pode ser arrastada).
+  barra de rolagem como a do macOS: por cima do conteúdo (não ocupa lugar no layout),
+  fina, aparece ao rolar ou com o ponteiro perto da borda, engrossa com o ponteiro em
+  cima (e se arrasta ou se clica no trilho) e some esmaecendo depois de 1 s. Vale para
+  todas as áreas que rolam do kit (`scroll_area`, barra lateral, área de texto,
+  seletores). `[appearance] scrollbars = "always"` deixa a barra sempre à mostra.
 - **`ui.wrap(|ui| ...)`**: lado a lado, quebrando linha quando a largura acaba (grade
   de ícones).
 - **`ui.toolbar(|ui| ...)`**: faixa de ferramentas no topo, com linha fina embaixo.

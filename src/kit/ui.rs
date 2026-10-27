@@ -504,6 +504,52 @@ struct ArrangeDrag {
 }
 
 
+/// Barra de rolagem que se sobrepõe ao conteúdo, como no macOS: não ocupa lugar no
+/// layout (os itens usam a largura inteira), aparece ao rolar ou com o ponteiro perto
+/// da borda, engrossa com o ponteiro em cima e some esmaecendo depois.
+#[derive(Debug, Clone, Copy)]
+struct ScrollBar {
+    /// Identidade (a da área que rola).
+    id: u64,
+    /// Área que rola (para "o ponteiro chegou perto da borda").
+    area: (f32, f32, f32, f32),
+    /// Borda direita da barra e o trilho (topo e comprimento).
+    right: f32,
+    top: f32,
+    len: f32,
+    /// Altura à vista e altura do conteúdo inteiro.
+    view: f32,
+    content: f32,
+}
+
+/// Barra fina (rolando) e grossa (ponteiro em cima ou arrastando), a faixa que pega
+/// o ponteiro e a faixa da borda que já mostra a barra.
+const SCROLLBAR_THIN: f32 = 6.0;
+const SCROLLBAR_THICK: f32 = 10.0;
+const SCROLLBAR_HIT: f32 = 14.0;
+const SCROLLBAR_NEAR: f32 = 20.0;
+
+impl ScrollBar {
+    fn max(&self) -> f32 {
+        (self.content - self.view).max(0.0)
+    }
+
+    fn thumb_len(&self) -> f32 {
+        (self.len * self.view / self.content.max(1.0)).clamp(32.0_f32.min(self.len), self.len)
+    }
+
+    fn thumb_y(&self, scroll: f32) -> f32 {
+        let max = self.max();
+        let k = if max > 0.0 { (scroll / max).clamp(0.0, 1.0) } else { 0.0 };
+        self.top + k * (self.len - self.thumb_len())
+    }
+
+    /// Faixa que pega o ponteiro (cobre a barra grossa e um pouco mais).
+    fn strip(&self) -> (f32, f32, f32, f32) {
+        (self.right - SCROLLBAR_HIT, self.top, SCROLLBAR_HIT, self.len)
+    }
+}
+
 /// O que dura entre quadros: componente apertado, foco do teclado e rolagens.
 #[derive(Default, Clone)]
 pub struct Memory {
@@ -517,6 +563,9 @@ pub struct Memory {
     pub scroll: HashMap<u64, f32>,
     /// Arrasto da barra de rolagem: área e ponto do clique dentro da alça.
     pub dragging_scroll: Option<(u64, f32)>,
+    /// Barras de rolagem que se sobrepõem ao conteúdo: rolagem do último quadro e
+    /// quando a barra foi mexida (ou o ponteiro chegou perto) pela última vez.
+    scrollbars: HashMap<u64, (f32, Option<std::time::Instant>)>,
     /// Tela sendo arrastada no arranjo (`Ui::arrangement`).
     arrange_drag: Option<ArrangeDrag>,
     /// O próximo `text_input` desenhado recebe o foco (`Ui::focus_next_input`).
@@ -3393,7 +3442,22 @@ impl<'a> Ui<'a> {
         if std::mem::take(&mut self.ctx.memory.focus_next) {
             self.ctx.memory.focus = Some(id);
         }
-        if r.hovered && self.ctx.input.pressed {
+        // Barra de rolagem por cima do texto (não reserva lugar). A identidade é a da
+        // área com o bit de cima ligado (sem gastar outra e mudar as dos seguintes).
+        let bar = ScrollBar {
+            id: id | (1 << 63),
+            area: rect,
+            right: rect.0 + rect.2 - 1.0,
+            top: rect.1 + pad,
+            len: view.1,
+            view: view.1,
+            content: starts.len() as f32 * line_h,
+        };
+        let on_bar = self.scrollbar_input(&bar, &mut doc.scroll);
+        if on_bar && self.ctx.input.pressed {
+            self.ctx.memory.focus = Some(id);
+        }
+        if r.hovered && self.ctx.input.pressed && !on_bar {
             self.ctx.memory.focus = Some(id);
             if let Some(at) = pointer_at(self, doc, &starts) {
                 doc.edit = Edit { cursor: at, anchor: Some(at) };
@@ -3647,12 +3711,9 @@ impl<'a> Ui<'a> {
             fill_rounded(&mut clip, cursor_x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(t.text));
         }
         self.canvas.draw_pixmap(crate::ui::draw::px(text_x.floor()), crate::ui::draw::px(rect.1.floor()), clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
-        // Indicador de rolagem à direita quando o texto passa da altura.
-        if content_h > view.1 {
-            let bar_h = (view.1 * view.1 / content_h).max(24.0);
-            let bar_y = rect.1 + pad + (view.1 - bar_h) * doc.scroll / (content_h - view.1);
-            fill_rounded(self.canvas, rect.0 + rect.2 - 8.0, bar_y, 4.0, bar_h, 2.0, color(t.shade(60)));
-        }
+        // Barra de rolagem por cima do texto, quando ele passa da altura.
+        let bar = ScrollBar { content: content_h, ..bar };
+        self.scrollbar_draw(&bar, doc.scroll);
         TextAreaResponse { response: r, pointer_index }
     }
 
@@ -4588,6 +4649,101 @@ impl<'a> Ui<'a> {
         self.cursor_y = y0 + h + t.spacing;
     }
 
+    /// O ponteiro pode mexer na barra de rolagem `b` (sem menu nem modal por cima)?
+    fn scrollbar_reachable(&self, rect: (f32, f32, f32, f32)) -> bool {
+        let under_menu = self.ctx.memory.menu_rect.is_some_and(|r| self.ctx.input.over(r)) || self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r));
+        let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
+        !under_menu && !blocked && self.over(rect)
+    }
+
+    /// Apertar e arrastar a barra de rolagem: apertar na alça a agarra onde foi
+    /// apertada; no trilho, a alça pula para o ponteiro. Devolve se o ponteiro está na
+    /// faixa da barra (o aperto é dela, não do conteúdo).
+    fn scrollbar_input(&mut self, b: &ScrollBar, scroll: &mut f32) -> bool {
+        let max = b.max();
+        if max <= 0.0 {
+            return false;
+        }
+        let on = self.scrollbar_reachable(b.strip());
+        if on && self.ctx.input.pressed {
+            let top = b.thumb_y(*scroll);
+            let thumb = b.thumb_len();
+            let py = self.pointer().map_or(top, |(_, py)| py);
+            let grab = if py >= top && py <= top + thumb { py - top } else { thumb / 2.0 };
+            self.ctx.memory.dragging_scroll = Some((b.id, grab));
+            self.ctx.memory.active = Some(b.id);
+            self.ctx.repaint = true;
+        }
+        if let (Some((sid, grab)), Some((_, py))) = (self.ctx.memory.dragging_scroll, self.pointer()) {
+            if sid == b.id {
+                let k = (py - grab - b.top) / (b.len - b.thumb_len()).max(1.0);
+                *scroll = k.clamp(0.0, 1.0) * max;
+                self.ctx.repaint = true;
+            }
+        }
+        on
+    }
+
+    /// Desenha a barra de rolagem `b` por cima do conteúdo, se ela está à mostra:
+    /// rolou há pouco, o ponteiro está perto da borda ou em cima dela, ou está sendo
+    /// arrastada (ou `[appearance] scrollbars = "always"`). Some esmaecendo
+    /// (`motion::SCROLLBAR_FADE`) depois de `motion::SCROLLBAR_HOLD`; com as transições
+    /// desligadas, de uma vez.
+    fn scrollbar_draw(&mut self, b: &ScrollBar, scroll: f32) {
+        if b.max() <= 0.0 {
+            self.ctx.memory.scrollbars.remove(&b.id);
+            return;
+        }
+        let now = std::time::Instant::now();
+        let dragging = self.ctx.memory.dragging_scroll.is_some_and(|(s, _)| s == b.id);
+        let on_bar = self.scrollbar_reachable(b.strip());
+        let near = self.scrollbar_reachable((b.right - SCROLLBAR_NEAR, b.area.1, SCROLLBAR_NEAR, b.area.3));
+        let entry = self.ctx.memory.scrollbars.entry(b.id).or_insert((scroll, None));
+        if (entry.0 - scroll).abs() > 0.5 || dragging || near || on_bar {
+            entry.1 = Some(now);
+        }
+        entry.0 = scroll;
+        let last = entry.1;
+        let alpha = if super::theme::scrollbars_always() {
+            1.0
+        } else {
+            match last {
+                None => 0.0,
+                Some(at) => {
+                    let since = now.duration_since(at);
+                    if since < crate::motion::SCROLLBAR_HOLD {
+                        self.wake_after(crate::motion::SCROLLBAR_HOLD - since);
+                        1.0
+                    } else if crate::settings_file::effect("transitions") {
+                        let p = (since - crate::motion::SCROLLBAR_HOLD).as_secs_f32() / crate::motion::SCROLLBAR_FADE.as_secs_f32();
+                        if p < 1.0 {
+                            self.ctx.ticking = true;
+                            1.0 - crate::motion::smooth(p)
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    }
+                }
+            }
+        };
+        if alpha <= 0.0 {
+            return;
+        }
+        let t = &self.ctx.theme;
+        let fade = |a: f32| (a * alpha).round().clamp(0.0, 255.0) as u8;
+        let thick = dragging || on_bar;
+        let (w, thumb_a) = if thick { (SCROLLBAR_THICK, if t.dark { 150.0 } else { 125.0 }) } else { (SCROLLBAR_THIN, if t.dark { 110.0 } else { 95.0 }) };
+        let (track_c, thumb_c) = (t.shade(fade(if t.dark { 22.0 } else { 14.0 })), t.shade(fade(thumb_a)));
+        if thick {
+            // Trilho leve atrás da alça grossa.
+            let tw = w + 4.0;
+            fill_rounded(self.canvas, b.right - tw, b.top, tw, b.len, tw / 2.0, color(track_c));
+        }
+        fill_rounded(self.canvas, b.right - 2.0 - w, b.thumb_y(scroll), w, b.thumb_len(), w / 2.0, color(thumb_c));
+    }
+
     /// Área que rola, ocupando o resto da altura, com margem do tema e barra de
     /// rolagem fina à direita quando o conteúdo não cabe.
     pub fn page(&mut self, add: impl FnOnce(&mut Ui)) {
@@ -4645,47 +4801,26 @@ impl<'a> Ui<'a> {
             scroll += self.ctx.input.scroll;
             self.ctx.repaint = true;
         }
-        // Barra de rolagem.
+        // Barra de rolagem por cima do conteúdo (não reserva lugar). Não entra nos
+        // cantos arredondados da janela (Tahoe, raio 24): perto da borda direita,
+        // começa e termina onde a curva do canto acaba.
+        let (win_w, win_h) = self.window_size();
+        let corner = if self.ctx.content_window && !self.ctx.maximized && self.offset.0 + x + w >= win_w - 2.0 { super::theme::RADIUS_WINDOW * 0.75 } else { 0.0 };
+        let top_in = (corner - (self.offset.1 + y0)).max(4.0);
+        let bottom_in = (corner - (win_h - (self.offset.1 + y0 + h))).max(4.0);
+        let bar = ScrollBar { id, area: (x, y0, w, h), right: x + w - 1.0, top: y0 + top_in, len: (h - top_in - bottom_in).max(40.0), view: h, content: content_h };
         if max_scroll > 0.0 {
-            // A barra não entra nos cantos arredondados da janela (Tahoe, raio 24): perto
-            // da borda direita, começa e termina onde a curva do canto acaba.
-            let (win_w, win_h) = self.window_size();
-            let corner = if self.ctx.content_window && !self.ctx.maximized && self.offset.0 + x + w >= win_w - 2.0 { super::theme::RADIUS_WINDOW * 0.75 } else { 0.0 };
-            let top_in = (corner - (self.offset.1 + y0)).max(4.0);
-            let bottom_in = (corner - (win_h - (self.offset.1 + y0 + h))).max(4.0);
-            let track_h = (h - top_in - bottom_in).max(40.0);
-            let thumb_h = (track_h * h / content_h).max(32.0);
-            let thumb_y = |s: f32| y0 + top_in + (s / max_scroll).clamp(0.0, 1.0) * (track_h - thumb_h);
-            let bar = (x + w - 14.0, y0, 14.0, h);
-            if let Some((px, py)) = self.pointer() {
-                let on_bar = px >= bar.0 && px <= bar.0 + bar.2 && py >= bar.1 && py <= bar.1 + bar.3;
-                if on_bar && self.ctx.input.pressed {
-                    let top = thumb_y(scroll);
-                    let grab = if py >= top && py <= top + thumb_h { py - top } else { thumb_h / 2.0 };
-                    self.ctx.memory.dragging_scroll = Some((id, grab));
-                    self.ctx.memory.active = Some(id);
-                }
-                if let Some((sid, grab)) = self.ctx.memory.dragging_scroll {
-                    if sid == id {
-                        let k = (py - grab - y0 - top_in) / (track_h - thumb_h).max(1.0);
-                        scroll = k.clamp(0.0, 1.0) * max_scroll;
-                        self.ctx.repaint = true;
-                    }
-                }
-            }
+            self.scrollbar_input(&bar, &mut scroll);
             scroll = scroll.clamp(0.0, max_scroll);
-            let active = self.ctx.memory.dragging_scroll.is_some_and(|(s, _)| s == id) || self.over(bar);
-            let tw = if active { 8.0 } else { 6.0 };
-            copy_back(&inner, self.canvas, crate::ui::draw::px(x + pad), crate::ui::draw::px(y0));
-            fill_rounded(self.canvas, bar.0 + 2.0 + (8.0 - tw) / 2.0, thumb_y(scroll), tw, thumb_h, tw / 2.0, color(self.ctx.theme.shade(if active { 120 } else { 80 })));
         } else {
             // Sem rolagem: se havia rolagem guardada (a janela cresceu), redesenha.
             if scroll != 0.0 {
                 self.ctx.repaint = true;
             }
             scroll = 0.0;
-            copy_back(&inner, self.canvas, crate::ui::draw::px(x + pad), crate::ui::draw::px(y0));
         }
+        copy_back(&inner, self.canvas, crate::ui::draw::px(x + pad), crate::ui::draw::px(y0));
+        self.scrollbar_draw(&bar, scroll);
         self.ctx.memory.scroll.insert(id, scroll);
         self.cursor_y = y0 + h;
     }
@@ -4809,30 +4944,22 @@ impl<'a> Ui<'a> {
             scroll += std::mem::take(&mut self.ctx.input.scroll);
             self.ctx.repaint = true;
         }
-        // Barra de rolagem: fica entre a busca e o fim da curva do canto de baixo do
-        // painel (não entra no canto arredondado), e se arrasta como a da janela.
-        let view = list_bottom - list_top;
+        // Barra de rolagem por cima dos itens (não reserva lugar: as pílulas têm a
+        // mesma margem dos dois lados): fica entre a busca e o fim da curva do canto de
+        // baixo do painel (não entra no canto arredondado), e se arrasta como a da janela.
         let track_top = list_top + 2.0;
         let corner_end = if tahoe { panel.1 + panel.3 - super::theme::RADIUS_SIDEBAR * 0.75 } else { list_bottom };
-        let track_h = (corner_end.min(list_bottom) - track_top).max(24.0);
-        let thumb = (track_h * view / total.max(1.0)).clamp(24.0, track_h);
-        let bar = (panel.0 + panel.2 - 12.0, track_top, 12.0, track_h);
+        let bar = ScrollBar {
+            id: scroll_id,
+            area: (panel.0, list_top, panel.2, list_bottom - list_top),
+            right: panel.0 + panel.2 - 2.0,
+            top: track_top,
+            len: (corner_end.min(list_bottom) - track_top).max(24.0),
+            view: list_bottom - list_top,
+            content: total,
+        };
         if max_scroll > 0.0 && !blocked {
-            if let Some((px, py)) = self.pointer() {
-                let on_bar = px >= bar.0 && px <= bar.0 + bar.2 && py >= bar.1 && py <= bar.1 + bar.3;
-                if on_bar && self.ctx.input.pressed {
-                    let top = track_top + (track_h - thumb) * (scroll / max_scroll).clamp(0.0, 1.0);
-                    let grab = if py >= top && py <= top + thumb { py - top } else { thumb / 2.0 };
-                    self.ctx.memory.dragging_scroll = Some((scroll_id, grab));
-                    self.ctx.memory.active = Some(scroll_id);
-                }
-                if let Some((sid, grab)) = self.ctx.memory.dragging_scroll {
-                    if sid == scroll_id {
-                        scroll = ((py - grab - track_top) / (track_h - thumb).max(1.0)).clamp(0.0, 1.0) * max_scroll;
-                        self.ctx.repaint = true;
-                    }
-                }
-            }
+            self.scrollbar_input(&bar, &mut scroll);
         }
         let scroll = scroll.clamp(0.0, max_scroll);
         self.ctx.memory.scroll.insert(scroll_id, scroll);
@@ -4908,14 +5035,8 @@ impl<'a> Ui<'a> {
             let tx = if tahoe { rect.0 + 34.0 } else { rect.0 + 42.0 };
             self.draw_text(name, tx, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, tc);
         }
-        // Barra de rolagem fina quando a lista não cabe.
-        if max_scroll > 0.0 {
-            let ty = track_top + (track_h - thumb) * (scroll / max_scroll);
-            let active = self.ctx.memory.dragging_scroll.is_some_and(|(s, _)| s == scroll_id) || self.over(bar);
-            let tw = if active { 7.0 } else { 4.0 };
-            let tx = panel.0 + panel.2 - 5.0 - tw;
-            fill_rounded(self.canvas, tx, ty, tw, thumb, tw / 2.0, color(t.shade(if active { 120 } else if t.dark { 90 } else { 70 })));
-        }
+        // Barra de rolagem por cima da lista, quando ela não cabe.
+        self.scrollbar_draw(&bar, scroll);
         // O vazio da barra lateral arrasta a janela (os itens têm prioridade).
         if tahoe {
             self.window_drag_area(panel);
@@ -5149,6 +5270,19 @@ mod tests {
 
     fn menu(click: (f32, f32), item: (f32, f32), height: f32) -> MenuState {
         MenuState { owner: 1, pos: (click.0, item.1), click, height, item_top: Some(item.0), opened: None }
+    }
+
+    #[test]
+    fn barra_de_rolagem_alca_proporcional_e_nas_pontas() {
+        let b = ScrollBar { id: 1, area: (0.0, 0.0, 200.0, 100.0), right: 199.0, top: 4.0, len: 92.0, view: 100.0, content: 400.0 };
+        assert_eq!(b.max(), 300.0);
+        assert!((b.thumb_len() - 32.0).abs() < 0.01, "um quarto do trilho, no mínimo 32");
+        assert_eq!(b.thumb_y(0.0), 4.0);
+        assert!((b.thumb_y(300.0) + b.thumb_len() - 96.0).abs() < 0.01, "no fim, a alça encosta no fim do trilho");
+        // A faixa que pega o ponteiro fica na borda direita da área.
+        let s = b.strip();
+        assert_eq!(s.0 + s.2, 199.0);
+        assert!(s.2 <= 14.0);
     }
 
     #[test]
