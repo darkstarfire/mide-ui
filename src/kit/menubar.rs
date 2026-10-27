@@ -81,12 +81,63 @@ pub const ZOOM: &str = "mide-ui:zoom";
 
 /// Menu "Janela" padrão, com os itens extras do app (se houver) depois.
 pub fn window_menu(extra: Vec<MenuItem>) -> MenuGroup {
-    let mut items = vec![MenuItem::action(MINIMIZE, "Minimizar"), MenuItem::action(ZOOM, "Zoom")];
+    let mut items = vec![MenuItem::action(MINIMIZE, "Minimizar").shortcut("Super+H")];
+    // No mide, os itens do menu Janela do Mac (o compositor faz cada um); fora dele, só
+    // os que a própria janela consegue (minimizar e maximizar).
+    if crate::control_client::on_mide() {
+        let w = |verb: &str, label: &str| MenuItem::action(&format!("{WINDOW_PREFIX}{verb}"), label);
+        items.extend([
+            w("fill", "Preencher"),
+            w("center", "Centralizar"),
+            MenuItem::Separator,
+            MenuItem::Submenu {
+                label: "Mover e redimensionar".into(),
+                items: vec![
+                    w("left", "Metade esquerda"),
+                    w("right", "Metade direita"),
+                    w("top", "Metade de cima"),
+                    w("bottom", "Metade de baixo"),
+                    MenuItem::Separator,
+                    w("top-left", "Canto superior esquerdo"),
+                    w("top-right", "Canto superior direito"),
+                    w("bottom-left", "Canto inferior esquerdo"),
+                    w("bottom-right", "Canto inferior direito"),
+                    MenuItem::Separator,
+                    w("restore", "Voltar ao tamanho anterior"),
+                ],
+            },
+            MenuItem::Submenu {
+                label: "Lado a lado na tela".into(),
+                items: vec![w("left", "À esquerda da tela"), w("right", "À direita da tela")],
+            },
+            MenuItem::Separator,
+            w("minimize-all", "Minimizar todas"),
+            w("front", "Trazer todas para a frente"),
+        ]);
+    } else {
+        items.push(MenuItem::action(ZOOM, "Zoom"));
+    }
     if !extra.is_empty() {
         items.push(MenuItem::Separator);
         items.extend(extra);
     }
     MenuGroup { title: "Janela".into(), items }
+}
+
+/// Começo das ações do menu Janela feitas pelo compositor (`mide-ui:janela:fill`...).
+pub const WINDOW_PREFIX: &str = "mide-ui:janela:";
+
+/// Ação do menu Janela que é do compositor: manda `window <verbo>` para a janela em foco
+/// (numa thread: o desenho não espera a resposta). Devolve se a ação era dessas.
+pub fn run_window_action(action: &str) -> bool {
+    let Some(verb) = action.strip_prefix(WINDOW_PREFIX) else {
+        return false;
+    };
+    let verb = verb.to_string();
+    std::thread::spawn(move || {
+        let _ = crate::control_client::ask_compositor(&format!("window {verb}"));
+    });
+    true
 }
 
 /// Árvore do menu como o dbusmenu pede: números estáveis (pela posição) para cada
@@ -346,10 +397,13 @@ mod tests {
     #[test]
     fn numeros_estaveis_e_acoes() {
         let tree = Tree::new(groups());
-        // Shell = 1, Nova aba = 2, separador = 3, Fechar = 4, Janela = 5, Minimizar = 6, Zoom = 7.
+        // Shell = 1, Nova aba = 2, separador = 3, Fechar = 4, Janela = 5, Minimizar = 6;
+        // depois, Preencher (no mide) ou Zoom (fora dele).
         assert_eq!(tree.actions.get(&2).map(String::as_str), Some("nova-aba"));
         assert_eq!(tree.actions.get(&4).map(String::as_str), Some("fechar"));
-        assert_eq!(tree.actions.get(&7).map(String::as_str), Some(ZOOM));
+        assert_eq!(tree.actions.get(&6).map(String::as_str), Some(MINIMIZE));
+        let next = tree.actions.get(&7).map(String::as_str).unwrap_or_default();
+        assert!(next == ZOOM || next == format!("{WINDOW_PREFIX}fill"), "{next}");
         assert!(!tree.actions.contains_key(&3));
     }
 

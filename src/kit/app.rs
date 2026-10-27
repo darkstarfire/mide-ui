@@ -850,6 +850,7 @@ impl Runner {
                     (super::menubar::ZOOM, Shell::Xdg(xdg)) => {
                         if self.maximized { xdg.unset_maximized() } else { xdg.set_maximized() }
                     }
+                    (a, _) if super::menubar::run_window_action(a) => {}
                     _ => self.ctx.input.menu.push(action),
                 }
             }
@@ -1461,6 +1462,9 @@ impl Runner {
                 Some(super::menubar::MINIMIZE) => child.xdg.set_minimized(),
                 Some(super::menubar::ZOOM) => {
                     if child.maximized { child.xdg.unset_maximized() } else { child.xdg.set_maximized() }
+                }
+                Some(a) => {
+                    super::menubar::run_window_action(a);
                 }
                 _ => {}
             }
