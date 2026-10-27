@@ -30,6 +30,7 @@
 //! O guia completo, com todos os componentes, fica em `docs/mide-ui.md`.
 
 mod app;
+mod band;
 pub mod chooser;
 mod i18n;
 mod input;
@@ -42,6 +43,7 @@ mod theme;
 mod ui;
 
 pub use app::{run, App, Waker, Window};
+pub use band::{band_touches, SelectionBand};
 pub use i18n::tr;
 pub use chooser::{Choice, ExtraChoice, FileChooser, Filter, Pattern};
 pub use input::{parse_uri_list, Input, Key, KeyPress};

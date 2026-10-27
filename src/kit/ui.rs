@@ -1860,9 +1860,14 @@ impl<'a> Ui<'a> {
         // para o borrão aparecer. Numa camada transparente (área de trabalho), o
         // compositor desfoca o que está atrás dela.
         self.ctx.frost.push((rect, radius));
+        // O vidro do compositor só numa camada: numa janela, o borrão do conteúdo já
+        // basta, e o do compositor (atrás da janela) aparecia como uma "sombra" clara
+        // através das partes translúcidas dela (a barra lateral de vidro).
         if self.ctx.glass_enabled() {
             self.ctx.glass_capable = true;
-            self.ctx.glass.push((x, y0, w, h, radius));
+            if self.ctx.layer {
+                self.ctx.glass.push((x, y0, w, h, radius));
+            }
         }
         let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
         if let Some(path) = crate::ui::draw::rounded_rect(x * k, y0 * k, w * k, h * k, radius * k) {
@@ -4034,6 +4039,12 @@ impl<'a> Ui<'a> {
             cx += w;
         }
         if dragged { None } else { clicked }
+    }
+
+    /// Uma divisória de colunas do cabeçalho está sendo arrastada (o retângulo de
+    /// seleção não começa nesse aperto).
+    pub fn header_dragging(&self) -> bool {
+        self.ctx.memory.header_drag.is_some()
     }
 
     /// Linha de lista em árvore (visualização em lista do Finder): recuo pelo nível,
