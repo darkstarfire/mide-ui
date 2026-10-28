@@ -3031,6 +3031,9 @@ impl<'a> Ui<'a> {
     /// Dica do Tahoe: depois de o ponteiro parar 0,8 s sobre o componente da
     /// `response`, uma cápsula pequena com `text` aparece embaixo dele.
     pub fn tooltip(&mut self, response: &Response, text: &str) {
+        // A dica sai no idioma da sessão (I2): o app passa o texto em inglês.
+        let text = crate::kit::tr(text).into_owned();
+        let text = text.as_str();
         let now = std::time::Instant::now();
         if !response.hovered {
             if self.ctx.memory.tooltip_hover.is_some_and(|(id, _)| id == response.id) {
