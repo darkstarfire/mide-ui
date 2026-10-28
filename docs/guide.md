@@ -80,6 +80,27 @@ novo.
 
 ## Componentes
 
+### Controles de mídia
+
+`platform::media` fornece uma sessão independente do player (Spotify, navegadores e
+players locais que exportem MPRIS), metadados, capa, estado, fila e playlists quando o
+player oferece essas extensões. Use `active_with_details(false)` para monitorar sem
+carregar listas; consulte com `true` enquanto o painel estiver aberto. `load_artwork`
+carrega capas `file://` ou HTTP(S) em uma imagem pequena.
+
+`ui.media_controls(&sessao, capa)` desenha o cartão reaproveitável e devolve as ações
+solicitadas. O app executa cada uma com `platform::media::command(&sessao, acao)`;
+`platform::media::seek` atualiza a posição. As listas de reprodução e a fila são
+opcionais no MPRIS e aparecem somente quando o player as fornece.
+
+```rust,ignore
+let sessao = mide_ui::media::active_with_details(true).unwrap();
+let acoes = ui.media_controls(&sessao, capa.as_ref());
+for acao in acoes {
+    mide_ui::media::command(&sessao, acao)?;
+}
+```
+
 | Componente | O que faz | Resposta útil |
 |---|---|---|
 | `ui.title("Texto")` | Título grande em negrito | — |

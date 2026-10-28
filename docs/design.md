@@ -23,6 +23,11 @@ mude lá, e vice-versa.
 
 ## 1. Princípios
 
+- **Mídia em um cartão consistente:** capa quadrada, título, artista e álbum em níveis
+  visuais distintos; transporte em uma linha de controles e listas em áreas roláveis.
+  Metadados opcionais não deixam espaços vazios e os estados de shuffle/repetição são
+  visíveis sem abrir o player.
+
 - **Claro e calmo.** Fundo quase branco, cartões brancos, texto quase preto, um azul de
   destaque. Cor forte só para o que importa (seleção, ação principal, perigo).
 - **Profundidade com vidro e sombra suave**, nunca com bordas pesadas. Linhas

@@ -3,3 +3,4 @@
 pub mod control_client;
 pub mod settings_file;
 pub mod sounds;
+pub mod media;

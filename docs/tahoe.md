@@ -22,6 +22,15 @@ Unidade: **pt** (ponto lógico do mide-ui; em escala 1, um pixel).
 
 ## 1. Ideias do Tahoe que guiam tudo
 
+### Cartão de reprodução
+
+O componente `ui.media_controls` apresenta capa quadrada com fallback simbólico,
+título e artista em hierarquia clara, álbum, progresso e transporte (anterior,
+reproduzir/pausar, parar, próxima). Shuffle e repetição mostram o estado atual. Fila e
+playlists usam linhas roláveis e só aparecem quando o player as disponibiliza; um
+player sem essas extensões continua oferecendo seus metadados e controles básicos.
+O app carrega a capa em segundo plano e entrega um `Pixmap` ao componente.
+
 1. **Duas camadas: conteúdo e navegação.** O conteúdo (arquivos, texto, fotos,
    opções) é opaco e ocupa a janela inteira, de borda a borda. Por cima dele flutua a
    camada de navegação e controles: barra lateral, grupos de botões da barra de

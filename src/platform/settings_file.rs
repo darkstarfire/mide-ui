@@ -108,6 +108,7 @@ pub fn effect(key: &str) -> bool {
 /// Itens da direita da barra superior que podem ser escondidos (`[bar]` no
 /// `config.toml`): chave, nome e explicação. O relógio fica sempre.
 pub const BAR_ITEMS: &[(&str, &str, &str)] = &[
+    ("media", "Controles de mídia", "Player atual, faixa e controles de reprodução"),
     ("gear", "Configurações", "Engrenagem que abre as Configurações do Sistema"),
     ("sound", "Som", "Volume e saída de som"),
     ("wifi", "Wi-Fi", "Redes sem fio"),

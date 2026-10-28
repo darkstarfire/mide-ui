@@ -43,6 +43,6 @@ pub mod storage;
 pub mod ui;
 
 pub use applications::{apps, default_apps, icons};
-pub use platform::{control_client, settings_file, sounds};
+pub use platform::{control_client, media, settings_file, sounds};
 pub use shell::{appmenu, motion};
 pub use storage::{files, places, thumbnails};

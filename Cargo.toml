@@ -1,6 +1,6 @@
 [package]
 name = "mide-ui"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Framework de apps nativos para Linux (Wayland) no visual do macOS Tahoe, nascido do mide (Mac Inspired Desktop Environment)"
 license = "MIT OR Apache-2.0"

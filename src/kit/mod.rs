@@ -34,6 +34,7 @@ mod band;
 pub mod chooser;
 mod i18n;
 mod input;
+mod media;
 pub mod menubar;
 pub mod picker;
 pub mod screens;
@@ -43,6 +44,7 @@ mod theme;
 mod ui;
 
 pub use app::{run, App, Waker, Window};
+pub use crate::platform::media::{MediaAction, MediaSession};
 pub use band::{band_touches, SelectionBand};
 pub use i18n::tr;
 pub use chooser::{Choice, ExtraChoice, FileChooser, Filter, Pattern};

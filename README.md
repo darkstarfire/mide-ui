@@ -71,6 +71,8 @@ O app roda numa sessão do mide (ou no mide em janela, para desenvolver).
 - `platform`, `shell`, `applications`, `storage`: auxiliares do desktop que o kit usa
   e que também servem aos apps (configuração do mide, menus na barra, ícones do tema,
   apps instalados, pastas do usuário, miniaturas).
+- `platform::media` e `kit::media_controls`: leitura MPRIS, capas e um painel reutilizável
+  para controlar players compatíveis, com fila e playlists quando disponíveis.
 
 ## Licença
 
