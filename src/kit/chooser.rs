@@ -361,17 +361,23 @@ impl FileChooser {
             let dir = self.dir.clone();
             let query = &mut self.query;
             let (has_back, has_forward) = (!self.back.is_empty(), !self.forward.is_empty());
+            // A barra lateral rola dentro da altura da coluna principal (barra de
+            // ferramentas, cabeçalho e lista): com muitos lugares, ela não empurra os
+            // botões de baixo para fora da janela.
+            let side_h = list_h + 24.0 + 36.0;
             let sidebar = |ui: &mut Ui, action: &mut Option<Action>| {
-                ui.heading(&tr("Favorites"));
-                for (label, icon, place) in places() {
-                    if label == "Computer" {
-                        ui.heading(&tr("Locations"));
+                ui.scroll_area(side_h, |ui| {
+                    ui.heading(&tr("Favorites"));
+                    for (label, icon, place) in places() {
+                        if label == "Computer" {
+                            ui.heading(&tr("Locations"));
+                        }
+                        let current = place == dir;
+                        if ui.list_row(icon, &tr(label), &[], current).clicked() && !current {
+                            *action = Some(Action::Go(place));
+                        }
                     }
-                    let current = place == dir;
-                    if ui.list_row(icon, &tr(label), &[], current).clicked() && !current {
-                        *action = Some(Action::Go(place));
-                    }
-                }
+                });
             };
             let mut main = |ui: &mut Ui, action: &mut Option<Action>| {
                 // Barra: voltar/avançar, o nome da pasta, subir e a busca.
