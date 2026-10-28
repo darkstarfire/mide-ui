@@ -106,15 +106,16 @@ pub fn effect(key: &str) -> bool {
 }
 
 /// Itens da direita da barra superior que podem ser escondidos (`[bar]` no
-/// `config.toml`): chave, nome e explicação. O relógio fica sempre.
+/// `config.toml`): chave, nome e explicação, em inglês (quem mostra passa por
+/// [`tr`](crate::kit::tr) ou [`tr_static`](crate::kit::tr_static)). O relógio fica sempre.
 pub const BAR_ITEMS: &[(&str, &str, &str)] = &[
-    ("media", "Controles de mídia", "Player atual, faixa e controles de reprodução"),
-    ("gear", "Configurações", "Engrenagem que abre as Configurações do Sistema"),
-    ("sound", "Som", "Volume e saída de som"),
-    ("wifi", "Wi-Fi", "Redes sem fio"),
-    ("bluetooth", "Bluetooth", "Aparelhos sem fio"),
-    ("battery", "Bateria", "Carga e tempo restante (só em notebooks)"),
-    ("control", "Central de controle", "Wi-Fi, Bluetooth, Não perturbe, brilho e som num painel só"),
+    ("media", "Media controls", "Current player, track and playback controls"),
+    ("gear", "Settings", "Gear that opens System Settings"),
+    ("sound", "Sound", "Volume and sound output"),
+    ("wifi", "Wi-Fi", "Wireless networks"),
+    ("bluetooth", "Bluetooth", "Wireless devices"),
+    ("battery", "Battery", "Charge and time remaining (laptops only)"),
+    ("control", "Control Center", "Wi-Fi, Bluetooth, Do Not Disturb, brightness and sound in one panel"),
 ];
 
 /// Um item da barra superior está à mostra? (Todos aparecem quando faltam.)

@@ -112,6 +112,13 @@ pub fn tr(text: &str) -> Cow<'_, str> {
     }
 }
 
+/// Como [`tr`], para textos fixos (`&'static str`): devolve também um `&'static str`,
+/// para tabelas e campos que guardam o texto sem dono (`const` com o texto em inglês,
+/// traduzido na hora de mostrar).
+pub fn tr_static(text: &'static str) -> &'static str {
+    lookup(text).and_then(|f| f.first().copied()).unwrap_or(text)
+}
+
 /// Como [`tr`], com contexto (`msgctxt`): o mesmo texto em inglês com traduções
 /// diferentes ("Open" do menu e "Open" de estado, por exemplo).
 pub fn trc<'a>(context: &str, text: &'a str) -> Cow<'a, str> {
@@ -348,6 +355,89 @@ msgstr ""
         assert_eq!(plural_index("pt_BR", 2), 1);
         assert_eq!(plural_index("en", 0), 1);
         assert_eq!(plural_index("en", 1), 0);
+    }
+
+    /// Textos em inglês do código: os literais de `tr!(`, `tr(`, `tr_static(`, `trn(`
+    /// (o singular), `trc(` (contexto e texto) e os das dicas (`tooltip(&r, "…")`,
+    /// `Tool::new(ícone, "…")`), que o kit traduz. Devolve (arquivo, contexto, texto).
+    fn msgids(dir: &std::path::Path, out: &mut Vec<(String, Option<String>, String)>) {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                msgids(&path, out);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") || path.ends_with("i18n.rs") {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+            // Sem os comentários (os exemplos da documentação não são textos do kit).
+            let src: String = src.lines().filter(|l| !l.trim_start().starts_with("//")).flat_map(|l| [l, "\n"]).collect();
+            for marker in ["tr!(", "tr(", "tr_static(", "trn(", "trc(", "tooltip(", "Tool::new("] {
+                let mut rest = src.as_str();
+                while let Some(i) = rest.find(marker) {
+                    // `include_str!(` não é `tr!(`, nem `attr(` é `tr(`: a marca começa uma palavra.
+                    let whole = !rest[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+                    rest = &rest[i + marker.len()..];
+                    if !whole {
+                        continue;
+                    }
+                    let entry = match marker {
+                        "trc(" => string_literal(rest).and_then(|(ctx, after)| string_literal(after).map(|(text, _)| (Some(ctx), text))),
+                        // O texto é o segundo argumento: pula o primeiro (até a vírgula).
+                        "tooltip(" | "Tool::new(" => rest.split_once(',').and_then(|(_, after)| string_literal(after)).map(|(text, _)| (None, text)),
+                        _ => string_literal(rest).map(|(text, _)| (None, text)),
+                    };
+                    if let Some((context, text)) = entry {
+                        out.push((path.display().to_string(), context, text));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Lê um literal de string no começo de `s` (depois de espaços e vírgula); devolve o
+    /// texto (com os escapes desfeitos) e o resto.
+    fn string_literal(s: &str) -> Option<(String, &str)> {
+        let s = s.trim_start().trim_start_matches(',').trim_start();
+        let body = s.strip_prefix('"')?;
+        let mut text = String::new();
+        let mut chars = body.char_indices();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '"' => return Some((text, &body[i + 1..])),
+                '\\' => match chars.next() {
+                    Some((_, 'n')) => text.push('\n'),
+                    Some((_, 't')) => text.push('\t'),
+                    Some((_, other)) => text.push(other),
+                    None => return None,
+                },
+                _ => text.push(c),
+            }
+        }
+        None
+    }
+
+    /// Todo texto que passa por `tr`/`tr!`/`trn`/`trc` (e as dicas) no mide-ui tem
+    /// tradução para o pt-BR em `locales/pt_BR.po`.
+    #[test]
+    fn todo_texto_tem_traducao_pt_br() {
+        set_language("pt_BR");
+        let mut found = Vec::new();
+        msgids(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+        assert!(found.len() > 50, "a varredura achou poucos textos: {}", found.len());
+        let mut missing: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (file, context, text) in found {
+            // Textos sem letras ("…", "+") não precisam de tradução.
+            if !seen.insert((context.clone(), text.clone())) || !text.chars().any(char::is_alphabetic) {
+                continue;
+            }
+            if !is_translated(context.as_deref(), &text) {
+                missing.push(format!("{file}: {text:?}"));
+            }
+        }
+        assert!(missing.is_empty(), "sem tradução em locales/pt_BR.po:\n{}", missing.join("\n"));
     }
 
     #[test]

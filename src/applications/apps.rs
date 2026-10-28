@@ -40,6 +40,29 @@ pub const GROUPS: &[&str] = &[
     "Outros",
 ];
 
+/// Nome do grupo (ou da pasta) do launcher para mostrar, no idioma da sessão. Os
+/// grupos de [`GROUPS`] são chaves fixas (guardadas no arranjo do launcher e
+/// comparadas pelo mide), por isso continuam em português; aqui viram o texto da
+/// interface (inglês na base, pt-BR pela tradução).
+pub fn group_label(group: &str) -> std::borrow::Cow<'static, str> {
+    use crate::kit::tr;
+    match group {
+        "Internet" => tr("Internet"),
+        "Escritório" => tr("Office"),
+        "Gráficos" => tr("Graphics"),
+        "Multimídia" => tr("Multimedia"),
+        "Desenvolvimento" => tr("Development"),
+        "Jogos" => tr("Games"),
+        "Educação" => tr("Education"),
+        "Ciência" => tr("Science"),
+        "Utilitários" => tr("Utilities"),
+        "Sistema" => tr("System"),
+        "Configurações" => tr("Settings"),
+        "Outros" => tr("Other"),
+        other => std::borrow::Cow::Owned(other.to_string()),
+    }
+}
+
 /// Grupo de um app pelas categorias do `.desktop` (a primeira principal que casar).
 pub fn group_of(categories: &[&str]) -> &'static str {
     // Categorias mais específicas primeiro: "Settings" costuma vir junto de "System".

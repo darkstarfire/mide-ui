@@ -76,7 +76,7 @@ impl<'a> Ui<'a> {
     /// `fixed_size`, `glass` e `accepts_files` de `window` valem para a filha.
     ///
     /// ```ignore
-    /// if ui.tool_button("preferences-system-symbolic", "Preferências").clicked() {
+    /// if ui.tool_button("preferences-system-symbolic", "Settings").clicked() {
     ///     ui.open_window("prefs", Window::new("Preferências").size(520, 440).glass());
     /// }
     /// ```
@@ -298,7 +298,7 @@ impl<'a> Ui<'a> {
     /// clicado.
     ///
     /// ```ignore
-    /// match ui.tool_group(&[Tool::new("document-open-symbolic", "Abrir arquivo"), Tool::new("folder-open-symbolic", "Abrir pasta")]) {
+    /// match ui.tool_group(&[Tool::new("document-open-symbolic", "Open File"), Tool::new("folder-open-symbolic", "Open Folder")]) {
     ///     Some(0) => self.abrir_arquivo(),
     ///     Some(1) => self.abrir_pasta(),
     ///     _ => {}

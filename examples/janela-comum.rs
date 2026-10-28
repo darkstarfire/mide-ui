@@ -1,8 +1,44 @@
 //! Janela comum (sem conteúdo inteiro) com menus: no mide, a barra de título é do
 //! compositor e os menus vão para a barra superior; fora do mide (ou com
 //! `MIDE_UI_STANDALONE=1`), o mide-ui desenha a barra, com os menus dentro dela.
+//!
+//! Mostra também a tradução: os textos estão em inglês no código, passam por `tr`/`tr!`
+//! e o catálogo pt-BR do app (`PT_BR`, aqui embutido) é registrado com `add_catalog`.
 
-use mide_ui::kit::{run, window_menu, App, MenuGroup, MenuItem, Ui, Window};
+use mide_ui::kit::{i18n::add_catalog, run, tr, window_menu, App, MenuGroup, MenuItem, Ui, Window};
+
+/// Catálogo pt-BR do exemplo (num app de verdade, `include_str!("../locales/pt_BR.po")`).
+const PT_BR: &str = r#"
+msgid "Regular window"
+msgstr "Janela comum"
+
+msgid "{n} click(s). Last menu: {menu}"
+msgstr "{n} clique(s). Último menu: {menu}"
+
+msgid "none"
+msgstr "nenhum"
+
+msgid "Click"
+msgstr "Clicar"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "New"
+msgstr "Novo"
+
+msgid "Quit"
+msgstr "Sair"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Paste"
+msgstr "Colar"
+"#;
 
 #[derive(Default)]
 struct Comum {
@@ -16,10 +52,11 @@ impl App for Comum {
             self.ultimo_menu = action;
         }
         ui.page(|ui| {
-            ui.title("Janela comum");
+            ui.title(&tr("Regular window"));
             ui.card(|ui| {
-                ui.label(&format!("{} clique(s). Último menu: {}", self.cliques, if self.ultimo_menu.is_empty() { "nenhum" } else { &self.ultimo_menu }));
-                if ui.primary_button("Clicar").clicked() {
+                let menu = if self.ultimo_menu.is_empty() { tr("none").into_owned() } else { self.ultimo_menu.clone() };
+                ui.label(&mide_ui::tr!("{n} click(s). Last menu: {menu}", n = self.cliques, menu = menu));
+                if ui.primary_button(&tr("Click")).clicked() {
                     self.cliques += 1;
                 }
             });
@@ -28,13 +65,14 @@ impl App for Comum {
 
     fn menu_bar(&mut self) -> Vec<MenuGroup> {
         vec![
-            MenuGroup { title: "Arquivo".into(), items: vec![MenuItem::action("novo", "Novo").shortcut("Ctrl+N"), MenuItem::Separator, MenuItem::action("sair", "Sair")] },
-            MenuGroup { title: "Editar".into(), items: vec![MenuItem::action("copiar", "Copiar"), MenuItem::action("colar", "Colar")] },
+            MenuGroup { title: tr("File").into(), items: vec![MenuItem::action("novo", &tr("New")).shortcut("Ctrl+N"), MenuItem::Separator, MenuItem::action("sair", &tr("Quit"))] },
+            MenuGroup { title: tr("Edit").into(), items: vec![MenuItem::action("copiar", &tr("Copy")), MenuItem::action("colar", &tr("Paste"))] },
             window_menu(Vec::new()),
         ]
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    run(Window::new("Janela comum").app_id("janela-comum").size(560, 360), Comum::default())
+    add_catalog("pt_BR", PT_BR);
+    run(Window::new(&tr("Regular window")).app_id("janela-comum").size(560, 360), Comum::default())
 }

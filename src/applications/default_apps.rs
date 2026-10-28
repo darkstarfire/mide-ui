@@ -18,23 +18,24 @@ use std::{
 #[derive(Debug, Clone, Copy)]
 pub struct Category {
     pub key: &'static str,
+    /// Nome na tela, em inglês (quem mostra passa por [`tr`](crate::kit::tr)).
     pub label: &'static str,
     pub mimes: &'static [&'static str],
 }
 
 pub const CATEGORIES: &[Category] = &[
-    Category { key: "web", label: "Navegador", mimes: &["x-scheme-handler/http", "x-scheme-handler/https", "text/html", "application/xhtml+xml"] },
-    Category { key: "mail", label: "E-mail", mimes: &["x-scheme-handler/mailto"] },
-    Category { key: "files", label: "Pastas", mimes: &["inode/directory"] },
-    Category { key: "text", label: "Textos", mimes: &["text/plain", "text/markdown", "text/x-log"] },
+    Category { key: "web", label: "Web browser", mimes: &["x-scheme-handler/http", "x-scheme-handler/https", "text/html", "application/xhtml+xml"] },
+    Category { key: "mail", label: "Email", mimes: &["x-scheme-handler/mailto"] },
+    Category { key: "files", label: "Folders", mimes: &["inode/directory"] },
+    Category { key: "text", label: "Text", mimes: &["text/plain", "text/markdown", "text/x-log"] },
     Category {
         key: "documents",
-        label: "Documentos",
+        label: "Documents",
         mimes: &["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.oasis.opendocument.text", "text/rtf", "application/rtf"],
     },
-    Category { key: "image", label: "Imagens", mimes: &["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/svg+xml"] },
-    Category { key: "video", label: "Vídeos", mimes: &["video/mp4", "video/x-matroska", "video/webm", "video/quicktime", "video/x-msvideo"] },
-    Category { key: "music", label: "Músicas", mimes: &["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav", "audio/mp4", "audio/x-opus+ogg"] },
+    Category { key: "image", label: "Images", mimes: &["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/svg+xml"] },
+    Category { key: "video", label: "Videos", mimes: &["video/mp4", "video/x-matroska", "video/webm", "video/quicktime", "video/x-msvideo"] },
+    Category { key: "music", label: "Music", mimes: &["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav", "audio/mp4", "audio/x-opus+ogg"] },
     Category { key: "pdf", label: "PDF", mimes: &["application/pdf"] },
 ];
 

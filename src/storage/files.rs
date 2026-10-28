@@ -1,11 +1,13 @@
 //! Regras do gerenciador de arquivos (sem interface): listar pastas, ordenar,
-//! tamanhos e datas em português, criar pasta, renomear e tipos de arquivo.
+//! tamanhos e datas no idioma da sessão, criar pasta, renomear e tipos de arquivo.
 
 use std::{
     fs,
     path::{Path, PathBuf},
     time::SystemTime,
 };
+
+use crate::kit::{tr, tr_static, trc, trn};
 
 /// Um item de uma pasta.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,11 +69,12 @@ pub fn filter(entries: &[Entry], query: &str) -> Vec<Entry> {
     entries.iter().filter(|e| crate::apps::fold(&e.name).contains(&q)).cloned().collect()
 }
 
-/// Tamanho legível: "512 bytes", "3,2 KB", "14,8 MB", "1,1 GB".
+/// Tamanho legível: "512 bytes", "3,2 KB", "14,8 MB", "1,1 GB" (o separador decimal
+/// vem da tradução).
 pub fn size_text(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
     if bytes < 1000 {
-        return if bytes == 1 { "1 byte".into() } else { format!("{bytes} bytes") };
+        return trn("{n} byte", "{n} bytes", bytes);
     }
     let mut value = bytes as f64 / 1000.0;
     let mut unit = 0;
@@ -79,30 +82,44 @@ pub fn size_text(bytes: u64) -> String {
         value /= 1000.0;
         unit += 1;
     }
-    format!("{:.1} {}", value, UNITS[unit]).replace('.', ",")
+    format!("{:.1} {}", value, UNITS[unit]).replace('.', &trc("decimal separator", "."))
 }
 
 /// Data de modificação: "hoje, 14:30", "ontem, 09:05", "12 de out." ou "12 de out. de 2024".
 pub fn date_text(modified: SystemTime, now: SystemTime) -> String {
     use chrono::{DateTime, Datelike, Local};
-    const MONTHS: [&str; 12] = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."];
+    let month = |m: u32| match m {
+        0 => trc("short month", "Jan"),
+        1 => trc("short month", "Feb"),
+        2 => trc("short month", "Mar"),
+        3 => trc("short month", "Apr"),
+        4 => trc("short month", "May"),
+        5 => trc("short month", "Jun"),
+        6 => trc("short month", "Jul"),
+        7 => trc("short month", "Aug"),
+        8 => trc("short month", "Sep"),
+        9 => trc("short month", "Oct"),
+        10 => trc("short month", "Nov"),
+        _ => trc("short month", "Dec"),
+    };
     let when: DateTime<Local> = modified.into();
     let today: DateTime<Local> = now.into();
     let days = today.date_naive().signed_duration_since(when.date_naive()).num_days();
     match days {
-        0 => format!("hoje, {}", when.format("%H:%M")),
-        1 => format!("ontem, {}", when.format("%H:%M")),
-        _ if when.year() == today.year() => format!("{} de {}", when.day(), MONTHS[when.month0() as usize]),
-        _ => format!("{} de {} de {}", when.day(), MONTHS[when.month0() as usize], when.year()),
+        0 => crate::tr!("Today, {time}", time = when.format("%H:%M")),
+        1 => crate::tr!("Yesterday, {time}", time = when.format("%H:%M")),
+        _ if when.year() == today.year() => crate::tr!("{month} {day}", month = month(when.month0()), day = when.day()),
+        _ => crate::tr!("{month} {day}, {year}", month = month(when.month0()), day = when.day(), year = when.year()),
     }
 }
 
-/// Nome livre para uma pasta nova: "Nova pasta", "Nova pasta 2"...
+/// Nome livre para uma pasta nova: "New Folder", "New Folder 2"... (no idioma da sessão).
 pub fn new_folder_name(dir: &Path) -> String {
-    let mut name = "Nova pasta".to_string();
+    let base = tr("New Folder").into_owned();
+    let mut name = base.clone();
     let mut n = 2;
     while dir.join(&name).exists() {
-        name = format!("Nova pasta {n}");
+        name = format!("{base} {n}");
         n += 1;
     }
     name
@@ -251,56 +268,57 @@ pub fn favorites() -> Vec<(String, PathBuf, &'static str)> {
             .and_then(|t| crate::places::parse_user_dir(&t, key, &home))
             .unwrap_or_else(|| home.join(fallback))
     };
-    let mut list = vec![("Pasta pessoal".to_string(), home.clone(), "user-home-symbolic")];
+    let mut list = vec![(tr("Home").into_owned(), home.clone(), "user-home-symbolic")];
+    // Sem `user-dirs.dirs`, os nomes padrão do xdg-user-dirs (em inglês).
     for (key, fallback, label, icon) in [
-        ("DESKTOP", "Área de trabalho", "Área de trabalho", "user-desktop-symbolic"),
-        ("DOCUMENTS", "Documentos", "Documentos", "folder-documents-symbolic"),
-        ("DOWNLOAD", "Downloads", "Downloads", "folder-download-symbolic"),
-        ("PICTURES", "Imagens", "Imagens", "folder-pictures-symbolic"),
-        ("MUSIC", "Músicas", "Músicas", "folder-music-symbolic"),
-        ("VIDEOS", "Vídeos", "Vídeos", "folder-videos-symbolic"),
+        ("DESKTOP", "Desktop", tr("Desktop"), "user-desktop-symbolic"),
+        ("DOCUMENTS", "Documents", tr("Documents"), "folder-documents-symbolic"),
+        ("DOWNLOAD", "Downloads", tr("Downloads"), "folder-download-symbolic"),
+        ("PICTURES", "Pictures", tr("Pictures"), "folder-pictures-symbolic"),
+        ("MUSIC", "Music", tr("Music"), "folder-music-symbolic"),
+        ("VIDEOS", "Videos", tr("Videos"), "folder-videos-symbolic"),
     ] {
         let path = user_dir(key, fallback);
         if path.is_dir() && path != home {
-            list.push((label.to_string(), path, icon));
+            list.push((label.into_owned(), path, icon));
         }
     }
     list
 }
 
-/// Tipo do item em português, para a coluna "Tipo" da lista (como no Finder).
+/// Tipo do item no idioma da sessão, para a coluna "Tipo" da lista (como no Finder).
 pub fn kind_text(entry: &Entry) -> String {
     if entry.is_dir {
-        return "Pasta".into();
+        return tr("Folder").into_owned();
     }
     let ext = entry.path.extension().and_then(|e| e.to_str()).map(str::to_lowercase).unwrap_or_default();
     let kind = match ext.as_str() {
-        "png" => "Imagem PNG",
-        "jpg" | "jpeg" => "Imagem JPEG",
-        "gif" => "Imagem GIF",
-        "webp" => "Imagem WebP",
-        "svg" => "Imagem SVG",
-        "pdf" => "Documento PDF",
-        "txt" => "Texto",
-        "md" => "Texto Markdown",
-        "odt" | "doc" | "docx" => "Documento de texto",
-        "ods" | "xls" | "xlsx" | "csv" => "Planilha",
-        "odp" | "ppt" | "pptx" => "Apresentação",
-        "mp3" | "ogg" | "flac" | "wav" | "m4a" | "opus" => "Áudio",
-        "mp4" | "mkv" | "webm" | "avi" | "mov" => "Vídeo",
-        "zip" => "Arquivo ZIP",
-        "gz" | "tgz" | "xz" | "bz2" | "7z" | "rar" | "tar" | "zst" => "Arquivo compactado",
-        "rs" | "c" | "h" | "cpp" | "py" | "js" | "ts" | "go" | "java" | "sh" | "lua" | "vim" => "Código-fonte",
-        "html" | "htm" => "Página HTML",
-        "json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "conf" => "Configuração",
-        "desktop" => "Atalho de app",
-        "appimage" => "Programa (AppImage)",
-        "deb" | "rpm" | "flatpakref" => "Pacote de instalação",
-        "iso" | "img" => "Imagem de disco",
-        "" => "Documento",
-        _ => return format!("Documento {}", ext.to_uppercase()),
+        "png" => tr("PNG image"),
+        "jpg" | "jpeg" => tr("JPEG image"),
+        "gif" => tr("GIF image"),
+        "webp" => tr("WebP image"),
+        "svg" => tr("SVG image"),
+        "pdf" => tr("PDF document"),
+        "txt" => tr("Plain text"),
+        "md" => tr("Markdown text"),
+        "odt" | "doc" | "docx" => tr("Text document"),
+        "ods" | "xls" | "xlsx" | "csv" => tr("Spreadsheet"),
+        "odp" | "ppt" | "pptx" => tr("Presentation"),
+        "mp3" | "ogg" | "flac" | "wav" | "m4a" | "opus" => tr("Audio"),
+        "mp4" | "mkv" | "webm" | "avi" | "mov" => tr("Video"),
+        "zip" => tr("ZIP archive"),
+        "gz" | "tgz" | "xz" | "bz2" | "7z" | "rar" | "tar" | "zst" => tr("Compressed archive"),
+        "rs" | "c" | "h" | "cpp" | "py" | "js" | "ts" | "go" | "java" | "sh" | "lua" | "vim" => tr("Source code"),
+        "html" | "htm" => tr("HTML page"),
+        "json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "conf" => tr("Configuration file"),
+        "desktop" => tr("App shortcut"),
+        "appimage" => tr("Program (AppImage)"),
+        "deb" | "rpm" | "flatpakref" => tr("Installation package"),
+        "iso" | "img" => tr("Disk image"),
+        "" => tr("Document"),
+        _ => return crate::tr!("{ext} document", ext = ext.to_uppercase()),
     };
-    kind.into()
+    kind.into_owned()
 }
 
 /// Permissões no formato do `ls -l` ("rwxr-xr-x") e em octal ("755").
@@ -329,19 +347,19 @@ pub fn info_lines(path: &Path) -> std::io::Result<Vec<(&'static str, String)>> {
     }
     let size = if meta.is_dir() {
         let count = fs::read_dir(path).map(|r| r.count()).unwrap_or(0);
-        if count == 1 { "1 item".to_string() } else { format!("{count} itens") }
+        trn("{n} item", "{n} items", count as u64)
     } else {
-        format!("{} ({} bytes)", size_text(meta.len()), meta.len())
+        format!("{} ({})", size_text(meta.len()), trn("{n} byte", "{n} bytes", meta.len()))
     };
     let place = path.parent().map(|p| p.display().to_string()).unwrap_or_else(|| "/".into());
     let date = chrono::DateTime::<chrono::Local>::from(modified).format("%d/%m/%Y %H:%M").to_string();
     Ok(vec![
-        ("Nome", name),
-        ("Tipo", kind),
-        ("Tamanho", size),
-        ("Local", place),
-        ("Modificado", date),
-        ("Permissões", permissions_text(meta.permissions().mode())),
+        (tr_static("Name"), name),
+        (tr_static("Kind"), kind),
+        (tr_static("Size"), size),
+        (tr_static("Where"), place),
+        (tr_static("Modified"), date),
+        (tr_static("Permissions"), permissions_text(meta.permissions().mode())),
     ])
 }
 
@@ -473,7 +491,7 @@ pub fn compress_many(paths: &[PathBuf]) -> std::io::Result<PathBuf> {
     use std::io::Write;
     let first = paths.first().ok_or_else(|| std::io::Error::other("nada para compactar"))?;
     let dir = first.parent().ok_or_else(|| std::io::Error::other("sem pasta"))?;
-    let stem = if paths.len() == 1 { split_name(first).0 } else { "Arquivo".to_string() };
+    let stem = if paths.len() == 1 { split_name(first).0 } else { tr("Archive").into_owned() };
     let target = dir.join(unique_name(dir, &stem, "zip"));
     let file = fs::File::create(&target)?;
     let mut zip = zip::ZipWriter::new(file);
@@ -600,6 +618,7 @@ mod tests {
 
     #[test]
     fn informacoes_do_item() {
+        crate::kit::i18n::set_language("pt_BR");
         assert_eq!(permissions_text(0o100644), "rw-r--r-- (644)");
         assert_eq!(permissions_text(0o40755), "rwxr-xr-x (755)");
         let dir = std::env::temp_dir().join(format!("mide-info-{}", std::process::id()));
@@ -721,6 +740,7 @@ mod tests {
 
     #[test]
     fn tamanhos_em_portugues() {
+        crate::kit::i18n::set_language("pt_BR");
         assert_eq!(size_text(1), "1 byte");
         assert_eq!(size_text(512), "512 bytes");
         assert_eq!(size_text(3_200), "3,2 KB");
@@ -730,6 +750,7 @@ mod tests {
 
     #[test]
     fn datas_relativas() {
+        crate::kit::i18n::set_language("pt_BR");
         let now = SystemTime::now();
         assert!(date_text(now, now).starts_with("hoje, "));
         assert!(date_text(now - Duration::from_secs(86_400), now).starts_with("ontem, "));
@@ -762,6 +783,7 @@ mod tests {
 
     #[test]
     fn tipos_em_portugues() {
+        crate::kit::i18n::set_language("pt_BR");
         let entry = |name: &str, is_dir: bool| Entry { name: name.into(), path: PathBuf::from(name), is_dir, size: 0, modified: SystemTime::UNIX_EPOCH };
         assert_eq!(kind_text(&entry("Fotos", true)), "Pasta");
         assert_eq!(kind_text(&entry("a.PNG", false)), "Imagem PNG");

@@ -13,6 +13,7 @@ use std::{
 use zbus::zvariant::{Array, Dict, OwnedValue, Signature, StructureBuilder, Value};
 
 use super::app::Waker;
+use super::i18n::{tr, trc};
 
 /// Um menu da barra (título e itens).
 #[derive(Debug, Clone, PartialEq)]
@@ -81,47 +82,47 @@ pub const ZOOM: &str = "mide-ui:zoom";
 
 /// Menu "Janela" padrão, com os itens extras do app (se houver) depois.
 pub fn window_menu(extra: Vec<MenuItem>) -> MenuGroup {
-    let mut items = vec![MenuItem::action(MINIMIZE, "Minimizar").shortcut("Super+H")];
+    let mut items = vec![MenuItem::action(MINIMIZE, &tr("Minimize")).shortcut("Super+H")];
     // No mide, os itens do menu Janela do Mac (o compositor faz cada um); fora dele, só
     // os que a própria janela consegue (minimizar e maximizar).
     if crate::control_client::on_mide() {
-        let w = |verb: &str, label: &str| MenuItem::action(&format!("{WINDOW_PREFIX}{verb}"), label);
+        let w = |verb: &str, label: std::borrow::Cow<str>| MenuItem::action(&format!("{WINDOW_PREFIX}{verb}"), &label);
         items.extend([
-            w("fill", "Preencher"),
-            w("center", "Centralizar"),
+            w("fill", tr("Fill")),
+            w("center", tr("Center")),
             MenuItem::Separator,
             MenuItem::Submenu {
-                label: "Mover e redimensionar".into(),
+                label: tr("Move & Resize").into(),
                 items: vec![
-                    w("left", "Metade esquerda"),
-                    w("right", "Metade direita"),
-                    w("top", "Metade de cima"),
-                    w("bottom", "Metade de baixo"),
+                    w("left", trc("Window menu", "Left")),
+                    w("right", trc("Window menu", "Right")),
+                    w("top", trc("Window menu", "Top")),
+                    w("bottom", trc("Window menu", "Bottom")),
                     MenuItem::Separator,
-                    w("top-left", "Canto superior esquerdo"),
-                    w("top-right", "Canto superior direito"),
-                    w("bottom-left", "Canto inferior esquerdo"),
-                    w("bottom-right", "Canto inferior direito"),
+                    w("top-left", trc("Window menu", "Top Left")),
+                    w("top-right", trc("Window menu", "Top Right")),
+                    w("bottom-left", trc("Window menu", "Bottom Left")),
+                    w("bottom-right", trc("Window menu", "Bottom Right")),
                     MenuItem::Separator,
-                    w("restore", "Voltar ao tamanho anterior"),
+                    w("restore", tr("Return to Previous Size")),
                 ],
             },
             MenuItem::Submenu {
-                label: "Lado a lado na tela".into(),
-                items: vec![w("left", "À esquerda da tela"), w("right", "À direita da tela")],
+                label: tr("Full Screen Tile").into(),
+                items: vec![w("left", tr("Left of Screen")), w("right", tr("Right of Screen"))],
             },
             MenuItem::Separator,
-            w("minimize-all", "Minimizar todas"),
-            w("front", "Trazer todas para a frente"),
+            w("minimize-all", tr("Minimize All")),
+            w("front", tr("Bring All to Front")),
         ]);
     } else {
-        items.push(MenuItem::action(ZOOM, "Zoom"));
+        items.push(MenuItem::action(ZOOM, &tr("Zoom")));
     }
     if !extra.is_empty() {
         items.push(MenuItem::Separator);
         items.extend(extra);
     }
-    MenuGroup { title: "Janela".into(), items }
+    MenuGroup { title: tr("Window").into(), items }
 }
 
 /// Começo das ações do menu Janela feitas pelo compositor (`mide-ui:janela:fill`...).
@@ -412,7 +413,7 @@ mod tests {
         let tree = Tree::new(groups());
         let root = crate::appmenu::parse_for_test(&tree.node(0)).unwrap();
         let titles: Vec<&str> = root.children.iter().map(|i| i.label.as_str()).collect();
-        assert_eq!(titles, ["Shell", "Janela"]);
+        assert_eq!(titles, ["Shell", &*tr("Window")]);
         let shell = crate::appmenu::parse_for_test(&tree.node(1)).unwrap();
         assert_eq!(shell.children[0].label, "Nova aba");
         assert_eq!(shell.children[0].shortcut, "Ctrl+Shift+T");

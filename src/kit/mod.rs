@@ -46,7 +46,7 @@ mod ui;
 pub use app::{run, App, Waker, Window};
 pub use crate::platform::media::{MediaAction, MediaSession};
 pub use band::{band_touches, SelectionBand};
-pub use i18n::{tr, trc, trn};
+pub use i18n::{tr, tr_static, trc, trn};
 pub use chooser::{Choice, ExtraChoice, FileChooser, Filter, Pattern};
 pub use input::{parse_uri_list, Input, Key, KeyPress};
 pub use menubar::{window_menu, MenuGroup, MenuItem};

@@ -174,15 +174,17 @@ pub fn recent_items(dir: &Path, limit: usize) -> Vec<Item> {
     items
 }
 
-/// Há quanto tempo, em texto curto ("agora", "há 5 min", "há 3 h", "há 2 dias").
+/// Há quanto tempo, em texto curto no idioma da sessão ("agora", "há 5 min",
+/// "há 3 h", "há 2 dias").
 pub fn age_text(modified: SystemTime, now: SystemTime) -> String {
+    use crate::kit::{tr, trn};
     let secs = now.duration_since(modified).map(|d| d.as_secs()).unwrap_or(0);
     match secs {
-        0..=59 => "agora".into(),
-        60..=3599 => format!("há {} min", secs / 60),
-        3600..=86_399 => format!("há {} h", secs / 3600),
-        86_400..=172_799 => "ontem".into(),
-        _ => format!("há {} dias", secs / 86_400),
+        0..=59 => tr("just now").into_owned(),
+        60..=3599 => crate::tr!("{n} min ago", n = secs / 60),
+        3600..=86_399 => crate::tr!("{n} h ago", n = secs / 3600),
+        86_400..=172_799 => tr("yesterday").into_owned(),
+        _ => trn("{n} day ago", "{n} days ago", secs / 86_400),
     }
 }
 
@@ -608,6 +610,7 @@ mod tests {
 
     #[test]
     fn idade_em_texto() {
+        crate::kit::i18n::set_language("pt_BR");
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000_000);
         let ago = |s: u64| now - Duration::from_secs(s);
         assert_eq!(age_text(ago(5), now), "agora");

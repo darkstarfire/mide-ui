@@ -143,17 +143,17 @@ impl Theme {
 }
 
 /// Cores de destaque (Configurações → Aparência), como as do Mac: chave gravada, nome
-/// na tela e a cor no tema claro e no escuro (um pouco mais clara no escuro, para ler
+/// na tela (em inglês; quem mostra passa por [`tr`](crate::kit::tr)) e a cor no tema claro e no escuro (um pouco mais clara no escuro, para ler
 /// bem). Todas aguentam texto branco por cima nos dois temas.
 pub const ACCENTS: &[(&str, &str, [u8; 3], [u8; 3])] = &[
-    ("blue", "Azul", [10, 110, 235], [30, 125, 245]),
-    ("purple", "Roxo", [135, 70, 200], [160, 95, 225]),
-    ("pink", "Rosa", [215, 50, 125], [235, 80, 150]),
-    ("red", "Vermelho", [215, 45, 45], [235, 75, 70]),
-    ("orange", "Laranja", [225, 110, 10], [240, 130, 35]),
-    ("yellow", "Amarelo", [195, 140, 0], [215, 160, 10]),
-    ("green", "Verde", [35, 150, 65], [50, 170, 80]),
-    ("graphite", "Grafite", [115, 115, 125], [140, 140, 150]),
+    ("blue", "Blue", [10, 110, 235], [30, 125, 245]),
+    ("purple", "Purple", [135, 70, 200], [160, 95, 225]),
+    ("pink", "Pink", [215, 50, 125], [235, 80, 150]),
+    ("red", "Red", [215, 45, 45], [235, 75, 70]),
+    ("orange", "Orange", [225, 110, 10], [240, 130, 35]),
+    ("yellow", "Yellow", [195, 140, 0], [215, 160, 10]),
+    ("green", "Green", [35, 150, 65], [50, 170, 80]),
+    ("graphite", "Graphite", [115, 115, 125], [140, 140, 150]),
 ];
 
 /// Chave da cor de destaque escolhida (`blue` se nenhuma ou desconhecida).

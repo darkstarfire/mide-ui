@@ -1276,6 +1276,13 @@ impl<'a> Ui<'a> {
             if r.clicked {
                 self.ctx.window_request = Some(request);
             }
+            // Dica de cada botão (I2), traduzida pelo `tooltip`.
+            let tip = match request {
+                WindowRequest::Close => crate::kit::tr("Close"),
+                WindowRequest::Minimize => crate::kit::tr("Minimize"),
+                _ => crate::kit::tr("Zoom"),
+            };
+            self.tooltip(&r, &tip);
             let fill = if focused || group_hover { LIGHT_COLORS[i] } else { t.shade(if t.dark { 60 } else { 38 }) };
             fill_rounded(self.canvas, cx, y, LIGHT_SIZE, LIGHT_SIZE, LIGHT_SIZE / 2.0, color(fill));
             // Contorno fino (mais escuro que a cor), como uma lente.
@@ -1333,6 +1340,7 @@ impl<'a> Ui<'a> {
         if r.clicked {
             self.ctx.window_request = Some(WindowRequest::Close);
         }
+        self.tooltip(&r, "Close");
         let focused = self.ctx.input.window_active();
         let red = if focused || r.hovered { LIGHT_COLORS[0] } else { t.shade(if t.dark { 60 } else { 38 }) };
         fill_rounded(self.canvas, x, y, LIGHT_SIZE, LIGHT_SIZE, LIGHT_SIZE / 2.0, color(red));
@@ -3018,6 +3026,7 @@ impl<'a> Ui<'a> {
         let id = self.ctx.id();
         let add = (rect.0 + rect.2 - plus, rect.1 + 2.0, plus, plus);
         let r = self.interact(id, add);
+        self.tooltip(&r, "New Tab");
         fill_rounded(self.canvas, add.0, add.1, plus, plus, plus / 2.0, color(if r.hovered { t.hover } else { t.control }));
         let (cx, cy) = (add.0 + plus / 2.0, add.1 + plus / 2.0);
         fill_rounded(self.canvas, cx - 5.0, cy - 0.75, 10.0, 1.5, 0.75, color(t.text));

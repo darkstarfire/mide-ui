@@ -21,7 +21,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::{input::Key, Ui};
+use super::{input::Key, tr, Ui};
 use crate::apps::fold;
 
 /// Depois de um clique que troca a lista (um grupo, "‹ Todos"), os cliques nos itens
@@ -272,7 +272,7 @@ impl ListPicker {
                 ui.sized((inner - 100.0).max(40.0), |ui| ui.strong(&title));
                 ui.push_right(92.0);
                 ui.sized(92.0, |ui| {
-                    if ui.button("Cancelar").clicked() {
+                    if ui.button(&tr("Cancel")).clicked() {
                         cancel = true;
                     }
                 });
@@ -285,7 +285,7 @@ impl ListPicker {
             }
             ui.scroll_area_showing(list_h, keep, |ui| {
                 if rows.is_empty() {
-                    ui.note("Nada encontrado.");
+                    ui.note(&tr("No Results"));
                 }
                 for (k, row) in rows.iter().enumerate() {
                     let selected = marked == Some(k);

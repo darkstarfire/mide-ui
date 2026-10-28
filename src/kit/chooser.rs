@@ -22,7 +22,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{input::Key, Ui};
+use super::{input::Key, tr, trn, Tool, Ui};
 
 /// O que o seletor escolhe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,7 +272,7 @@ impl FileChooser {
             self.query.clear();
             self.reload();
         } else {
-            self.message = Some("Pasta não encontrada.".into());
+            self.message = Some(tr("Folder not found.").into());
         }
     }
 
@@ -301,11 +301,12 @@ impl FileChooser {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let taken = if self.mode == Mode::SaveFiles { self.result.iter().filter(|p| p.exists()).count() } else { 1 };
             let (title, message) = if taken > 1 {
-                (format!("Substituir {taken} arquivos?"), "Já existem arquivos com esses nomes nesta pasta. Substituir troca o conteúdo deles.".to_string())
+                (trn("Replace {n} file?", "Replace {n} files?", taken as u64), tr("Files with these names already exist in this folder. Replacing them will overwrite their contents.").into_owned())
             } else {
-                (format!("Substituir \"{name}\"?"), "Já existe um arquivo com esse nome nesta pasta. Substituir troca o conteúdo dele.".to_string())
+                (crate::tr!("Replace “{name}”?", name = name), tr("A file with this name already exists in this folder. Replacing it will overwrite its contents.").into_owned())
             };
-            return match ui.alert(&title, &message, &["Cancelar", "Substituir"]) {
+            let (cancel, replace) = (tr("Cancel"), tr("Replace"));
+            return match ui.alert(&title, &message, &[cancel.as_ref(), replace.as_ref()]) {
                 Some(1) => {
                     if self.mode != Mode::SaveFiles {
                         self.result = vec![path.clone()];
@@ -347,8 +348,8 @@ impl FileChooser {
                 if std::mem::take(&mut self.focus) {
                     ui.focus_next_input();
                 }
-                ui.form_row("Salvar como:", 110.0, |ui| {
-                    if ui.text_input(&mut self.name, "Nome do arquivo").submitted() {
+                ui.form_row(&tr("Save As:"), 110.0, |ui| {
+                    if ui.text_input(&mut self.name, &tr("File name")).submitted() {
                         action = Some(Action::Confirm);
                     }
                 });
@@ -361,13 +362,13 @@ impl FileChooser {
             let query = &mut self.query;
             let (has_back, has_forward) = (!self.back.is_empty(), !self.forward.is_empty());
             let sidebar = |ui: &mut Ui, action: &mut Option<Action>| {
-                ui.heading("Favoritos");
+                ui.heading(&tr("Favorites"));
                 for (label, icon, place) in places() {
-                    if label == "Computador" {
-                        ui.heading("Locais");
+                    if label == "Computer" {
+                        ui.heading(&tr("Locations"));
                     }
                     let current = place == dir;
-                    if ui.list_row(icon, label, &[], current).clicked() && !current {
+                    if ui.list_row(icon, &tr(label), &[], current).clicked() && !current {
                         *action = Some(Action::Go(place));
                     }
                 }
@@ -375,35 +376,35 @@ impl FileChooser {
             let mut main = |ui: &mut Ui, action: &mut Option<Action>| {
                 // Barra: voltar/avançar, o nome da pasta, subir e a busca.
                 ui.row(|ui| {
-                    match ui.toolbar_buttons(&[("go-previous-symbolic", "‹", false, has_back), ("go-next-symbolic", "›", false, has_forward)]) {
+                    match ui.tool_group(&[Tool::new("go-previous-symbolic", "Back").enabled(has_back), Tool::new("go-next-symbolic", "Forward").enabled(has_forward)]) {
                         Some(0) => *action = Some(Action::Back),
                         Some(1) => *action = Some(Action::Forward),
                         _ => {}
                     }
                     let up = dir.parent().map(Path::to_path_buf);
-                    if ui.toolbar_buttons(&[("go-up-symbolic", "↑", false, up.is_some())]).is_some() {
+                    if ui.tool_group(&[Tool::new("go-up-symbolic", "Enclosing Folder").enabled(up.is_some())]).is_some() {
                         *action = up.map(Action::Go);
                     }
-                    let name = dir.file_name().map_or_else(|| "Computador".to_string(), |n| n.to_string_lossy().into_owned());
-                    let name = if dir == crate::places::home_dir() { "Pasta pessoal".to_string() } else { name };
+                    let name = dir.file_name().map_or_else(|| tr("Computer").into_owned(), |n| n.to_string_lossy().into_owned());
+                    let name = if dir == crate::places::home_dir() { tr("Home").into_owned() } else { name };
                     ui.toolbar_title(&name, 220.0);
                     ui.push_right(190.0);
                     ui.sized(190.0, |ui| {
-                        ui.search_field(query, "Buscar");
+                        ui.search_field(query, &tr("Search"));
                     });
                 });
                 let q = crate::apps::fold(query.trim());
                 let shown: Vec<usize> = (0..entries.len()).filter(|&i| q.is_empty() || crate::apps::fold(&entries[i].name).contains(&q)).collect();
-                ui.list_header("Nome", &[("Tamanho", 90.0), ("Modificado", 130.0)], (0, true));
+                ui.list_header(&tr("Name"), &[(&tr("Size"), 90.0), (&tr("Date Modified"), 130.0)], (0, true));
                 ui.scroll_area(list_h, |ui| {
                     if shown.is_empty() {
-                        ui.note(if !q.is_empty() {
-                            "Nada com esse nome aqui."
+                        ui.note(&tr(if !q.is_empty() {
+                            "No items with that name here."
                         } else if folders_only {
-                            "Nenhuma pasta aqui."
+                            "No folders here."
                         } else {
-                            "Pasta vazia."
-                        });
+                            "Empty folder."
+                        }));
                     }
                     for &i in &shown {
                         let entry = &entries[i];
@@ -431,12 +432,12 @@ impl FileChooser {
             }
             if self.mode == Mode::SaveFiles {
                 let n = self.save_names.len();
-                ui.note(&if n == 1 { "1 arquivo será salvo na pasta escolhida.".to_string() } else { format!("{n} arquivos serão salvos na pasta escolhida.") });
+                ui.note(&trn("{n} file will be saved in the chosen folder.", "{n} files will be saved in the chosen folder.", n as u64));
             }
             if self.filters.len() > 1 {
                 let names: Vec<String> = self.filters.iter().map(|f| f.name.clone()).collect();
                 let mut current = self.filter;
-                if ui.dropdown("Mostrar", &names, &mut current).changed() {
+                if ui.dropdown(&tr("Show"), &names, &mut current).changed() {
                     action = Some(Action::Filter(current));
                 }
             }
@@ -456,14 +457,14 @@ impl FileChooser {
             }
             // Nova pasta: o nome numa linha, com Criar.
             if let Some(name) = self.new_folder.as_mut() {
-                ui.form_row("Nova pasta:", 110.0, |ui| {
+                ui.form_row(&tr("New Folder:"), 110.0, |ui| {
                     ui.sized(260.0, |ui| {
-                        if ui.text_input(name, "sem título").submitted() {
+                        if ui.text_input(name, &tr("untitled folder")).submitted() {
                             action = Some(Action::CreateFolder);
                         }
                     });
                     ui.sized(90.0, |ui| {
-                        if ui.button_styled("Criar", super::ButtonStyle::Bordered).clicked() {
+                        if ui.button_styled(&tr("Create"), super::ButtonStyle::Bordered).clicked() {
                             action = Some(Action::CreateFolder);
                         }
                     });
@@ -474,27 +475,27 @@ impl FileChooser {
             }
             ui.row(|ui| {
                 let label = match self.mode {
-                    _ if !self.accept_label.is_empty() => self.accept_label.as_str(),
-                    Mode::Open => "Abrir",
-                    Mode::Save | Mode::SaveFiles => "Salvar",
-                    Mode::Folder => "Escolher",
+                    _ if !self.accept_label.is_empty() => std::borrow::Cow::Borrowed(self.accept_label.as_str()),
+                    Mode::Open => tr("Open"),
+                    Mode::Save | Mode::SaveFiles => tr("Save"),
+                    Mode::Folder => tr("Choose"),
                 };
                 // "Nova pasta" à esquerda (onde se salva ou escolhe uma pasta).
                 if self.mode != Mode::Open && self.new_folder.is_none() {
                     ui.sized(120.0, |ui| {
-                        if ui.button_styled("Nova pasta", super::ButtonStyle::Bordered).clicked() {
+                        if ui.button_styled(&tr("New Folder"), super::ButtonStyle::Bordered).clicked() {
                             action = Some(Action::NewFolder);
                         }
                     });
                 }
                 ui.push_right(2.0 * 110.0 + 8.0);
                 ui.sized(110.0, |ui| {
-                    if ui.button("Cancelar").clicked() {
+                    if ui.button(&tr("Cancel")).clicked() {
                         action = Some(Action::Cancel);
                     }
                 });
                 ui.sized(110.0, |ui| {
-                    if ui.primary_button(label).clicked() {
+                    if ui.primary_button(&label).clicked() {
                         action = Some(Action::Confirm);
                     }
                 });
@@ -577,21 +578,22 @@ impl FileChooser {
                 None
             }
             Action::NewFolder => {
-                self.new_folder = Some("sem título".into());
-                ui.focus_next_input_selecting("sem título".len());
+                let untitled = tr("untitled folder").into_owned();
+                ui.focus_next_input_selecting(untitled.len());
+                self.new_folder = Some(untitled);
                 None
             }
             Action::CreateFolder => {
                 let name = self.new_folder.take().unwrap_or_default();
                 let name = name.trim();
                 if name.is_empty() || name.contains('/') {
-                    self.message = Some("Nome de pasta inválido.".into());
+                    self.message = Some(tr("Invalid folder name.").into());
                     return None;
                 }
                 let path = self.dir.join(name);
                 match std::fs::create_dir(&path) {
                     Ok(()) => self.go(path),
-                    Err(err) => self.message = Some(format!("Não foi possível criar a pasta: {err}")),
+                    Err(err) => self.message = Some(crate::tr!("Couldn’t create the folder: {error}", error = err)),
                 }
                 None
             }
@@ -636,7 +638,7 @@ impl FileChooser {
                         None
                     }
                     _ => {
-                        self.message = Some("Escolha um arquivo.".into());
+                        self.message = Some(tr("Choose a file.").into());
                         None
                     }
                 }
@@ -658,7 +660,7 @@ impl FileChooser {
             Mode::Save => {
                 let name = self.name.trim();
                 if name.is_empty() || name.contains('/') || name == "." || name == ".." {
-                    self.message = Some(if name.contains('/') { "O nome não pode ter \"/\".".into() } else { "Escreva o nome do arquivo.".into() });
+                    self.message = Some(tr(if name.contains('/') { "The name can’t contain “/”." } else { "Enter a file name." }).into());
                     return None;
                 }
                 let path = self.dir.join(name);
@@ -720,18 +722,18 @@ fn list(dir: &Path, mode: Mode, filter: Option<&Filter>, hidden: bool) -> Vec<En
 }
 
 /// Lugares da barra lateral: os favoritos (pasta pessoal e as pastas do usuário que
-/// existem) e o computador.
+/// existem) e o computador. O nome vem em inglês (passa por `tr` ao desenhar).
 fn places() -> Vec<(&'static str, &'static str, PathBuf)> {
     let home = crate::places::home_dir();
-    let mut out = vec![("Pasta pessoal", "user-home-symbolic", home.clone())];
+    let mut out = vec![("Home", "user-home-symbolic", home.clone())];
     if let Some(desktop) = crate::places::desktop_dir() {
-        out.push(("Área de trabalho", "user-desktop-symbolic", desktop));
+        out.push(("Desktop", "user-desktop-symbolic", desktop));
     }
-    for (label, icon, key) in [("Documentos", "folder-documents-symbolic", "DOCUMENTS"), ("Downloads", "folder-download-symbolic", ""), ("Imagens", "folder-pictures-symbolic", ""), ("Vídeos", "folder-videos-symbolic", ""), ("Músicas", "folder-music-symbolic", "MUSIC")] {
+    for (label, icon, key) in [("Documents", "folder-documents-symbolic", "DOCUMENTS"), ("Downloads", "folder-download-symbolic", ""), ("Pictures", "folder-pictures-symbolic", ""), ("Videos", "folder-videos-symbolic", ""), ("Music", "folder-music-symbolic", "MUSIC")] {
         let dir = match label {
             "Downloads" => crate::places::downloads_dir(),
-            "Imagens" => crate::places::pictures_dir(),
-            "Vídeos" => crate::places::videos_dir(),
+            "Pictures" => crate::places::pictures_dir(),
+            "Videos" => crate::places::videos_dir(),
             _ => match user_dir(&home, key) {
                 Some(d) => d,
                 None => continue,
@@ -741,7 +743,7 @@ fn places() -> Vec<(&'static str, &'static str, PathBuf)> {
             out.push((label, icon, dir));
         }
     }
-    out.push(("Computador", "computer-symbolic", PathBuf::from("/")));
+    out.push(("Computer", "computer-symbolic", PathBuf::from("/")));
     out
 }
 

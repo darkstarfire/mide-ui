@@ -5,3 +5,569 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Language: pt_BR\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+# Seletor de arquivos (kit/chooser.rs)
+msgid "Folder not found."
+msgstr "Pasta não encontrada."
+
+msgid "Replace {n} file?"
+msgid_plural "Replace {n} files?"
+msgstr[0] "Substituir {n} arquivo?"
+msgstr[1] "Substituir {n} arquivos?"
+
+msgid "Files with these names already exist in this folder. Replacing them will overwrite their contents."
+msgstr "Já existem arquivos com esses nomes nesta pasta. Substituir troca o conteúdo deles."
+
+msgid "Replace “{name}”?"
+msgstr "Substituir “{name}”?"
+
+msgid "A file with this name already exists in this folder. Replacing it will overwrite its contents."
+msgstr "Já existe um arquivo com esse nome nesta pasta. Substituir troca o conteúdo dele."
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Replace"
+msgstr "Substituir"
+
+msgid "Save As:"
+msgstr "Salvar como:"
+
+msgid "File name"
+msgstr "Nome do arquivo"
+
+msgid "Favorites"
+msgstr "Favoritos"
+
+msgid "Locations"
+msgstr "Locais"
+
+msgid "Back"
+msgstr "Voltar"
+
+msgid "Forward"
+msgstr "Avançar"
+
+msgid "Enclosing Folder"
+msgstr "Pasta de cima"
+
+msgid "Computer"
+msgstr "Computador"
+
+msgid "Home"
+msgstr "Pasta pessoal"
+
+msgid "Desktop"
+msgstr "Área de trabalho"
+
+msgid "Documents"
+msgstr "Documentos"
+
+msgid "Downloads"
+msgstr "Downloads"
+
+msgid "Pictures"
+msgstr "Imagens"
+
+msgid "Videos"
+msgstr "Vídeos"
+
+msgid "Music"
+msgstr "Músicas"
+
+msgid "Search"
+msgstr "Buscar"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Size"
+msgstr "Tamanho"
+
+msgid "Date Modified"
+msgstr "Modificado"
+
+msgid "No items with that name here."
+msgstr "Nada com esse nome aqui."
+
+msgid "No folders here."
+msgstr "Nenhuma pasta aqui."
+
+msgid "Empty folder."
+msgstr "Pasta vazia."
+
+msgid "{n} file will be saved in the chosen folder."
+msgid_plural "{n} files will be saved in the chosen folder."
+msgstr[0] "{n} arquivo será salvo na pasta escolhida."
+msgstr[1] "{n} arquivos serão salvos na pasta escolhida."
+
+msgid "Show"
+msgstr "Mostrar"
+
+msgid "New Folder:"
+msgstr "Nova pasta:"
+
+msgid "untitled folder"
+msgstr "sem título"
+
+msgid "Create"
+msgstr "Criar"
+
+msgid "Open"
+msgstr "Abrir"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Choose"
+msgstr "Escolher"
+
+msgid "New Folder"
+msgstr "Nova pasta"
+
+msgid "Invalid folder name."
+msgstr "Nome de pasta inválido."
+
+msgid "Couldn’t create the folder: {error}"
+msgstr "Não foi possível criar a pasta: {error}"
+
+msgid "Choose a file."
+msgstr "Escolha um arquivo."
+
+msgid "The name can’t contain “/”."
+msgstr "O nome não pode ter “/”."
+
+msgid "Enter a file name."
+msgstr "Escreva o nome do arquivo."
+
+# Seletor de lista (kit/picker.rs)
+msgid "No Results"
+msgstr "Nada encontrado."
+
+# Menu Janela (kit/menubar.rs) e botões da janela (kit/ui.rs)
+msgid "Window"
+msgstr "Janela"
+
+msgid "Minimize"
+msgstr "Minimizar"
+
+msgid "Zoom"
+msgstr "Zoom"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Fill"
+msgstr "Preencher"
+
+msgid "Center"
+msgstr "Centralizar"
+
+msgid "Move & Resize"
+msgstr "Mover e redimensionar"
+
+msgctxt "Window menu"
+msgid "Left"
+msgstr "Metade esquerda"
+
+msgctxt "Window menu"
+msgid "Right"
+msgstr "Metade direita"
+
+msgctxt "Window menu"
+msgid "Top"
+msgstr "Metade de cima"
+
+msgctxt "Window menu"
+msgid "Bottom"
+msgstr "Metade de baixo"
+
+msgctxt "Window menu"
+msgid "Top Left"
+msgstr "Canto superior esquerdo"
+
+msgctxt "Window menu"
+msgid "Top Right"
+msgstr "Canto superior direito"
+
+msgctxt "Window menu"
+msgid "Bottom Left"
+msgstr "Canto inferior esquerdo"
+
+msgctxt "Window menu"
+msgid "Bottom Right"
+msgstr "Canto inferior direito"
+
+msgid "Return to Previous Size"
+msgstr "Voltar ao tamanho anterior"
+
+msgid "Full Screen Tile"
+msgstr "Lado a lado na tela"
+
+msgid "Left of Screen"
+msgstr "À esquerda da tela"
+
+msgid "Right of Screen"
+msgstr "À direita da tela"
+
+msgid "Minimize All"
+msgstr "Minimizar todas"
+
+msgid "Bring All to Front"
+msgstr "Trazer todas para a frente"
+
+msgid "New Tab"
+msgstr "Nova aba"
+
+# Mídia (kit/media.rs)
+msgid "Now Playing"
+msgstr "Reprodução"
+
+msgid "Previous"
+msgstr "Anterior"
+
+msgid "Play"
+msgstr "Tocar"
+
+msgid "Pause"
+msgstr "Pausar"
+
+msgid "Stop"
+msgstr "Parar"
+
+msgid "Next"
+msgstr "Próxima"
+
+msgid "Shuffle"
+msgstr "Aleatório"
+
+msgid "Repeat"
+msgstr "Repetir"
+
+msgid "Repeat Playlist"
+msgstr "Repetir lista"
+
+msgid "Repeat Track"
+msgstr "Repetir faixa"
+
+msgid "Playlists"
+msgstr "Playlists"
+
+msgid "Up Next"
+msgstr "Fila"
+
+# Arquivos (storage/files.rs, storage/places.rs)
+msgid "{n} byte"
+msgid_plural "{n} bytes"
+msgstr[0] "{n} byte"
+msgstr[1] "{n} bytes"
+
+msgctxt "decimal separator"
+msgid "."
+msgstr ","
+
+msgctxt "short month"
+msgid "Jan"
+msgstr "jan."
+
+msgctxt "short month"
+msgid "Feb"
+msgstr "fev."
+
+msgctxt "short month"
+msgid "Mar"
+msgstr "mar."
+
+msgctxt "short month"
+msgid "Apr"
+msgstr "abr."
+
+msgctxt "short month"
+msgid "May"
+msgstr "mai."
+
+msgctxt "short month"
+msgid "Jun"
+msgstr "jun."
+
+msgctxt "short month"
+msgid "Jul"
+msgstr "jul."
+
+msgctxt "short month"
+msgid "Aug"
+msgstr "ago."
+
+msgctxt "short month"
+msgid "Sep"
+msgstr "set."
+
+msgctxt "short month"
+msgid "Oct"
+msgstr "out."
+
+msgctxt "short month"
+msgid "Nov"
+msgstr "nov."
+
+msgctxt "short month"
+msgid "Dec"
+msgstr "dez."
+
+msgid "Today, {time}"
+msgstr "hoje, {time}"
+
+msgid "Yesterday, {time}"
+msgstr "ontem, {time}"
+
+msgid "{month} {day}"
+msgstr "{day} de {month}"
+
+msgid "{month} {day}, {year}"
+msgstr "{day} de {month} de {year}"
+
+msgid "Folder"
+msgstr "Pasta"
+
+msgid "PNG image"
+msgstr "Imagem PNG"
+
+msgid "JPEG image"
+msgstr "Imagem JPEG"
+
+msgid "GIF image"
+msgstr "Imagem GIF"
+
+msgid "WebP image"
+msgstr "Imagem WebP"
+
+msgid "SVG image"
+msgstr "Imagem SVG"
+
+msgid "PDF document"
+msgstr "Documento PDF"
+
+msgid "Plain text"
+msgstr "Texto"
+
+msgid "Markdown text"
+msgstr "Texto Markdown"
+
+msgid "Text document"
+msgstr "Documento de texto"
+
+msgid "Spreadsheet"
+msgstr "Planilha"
+
+msgid "Presentation"
+msgstr "Apresentação"
+
+msgid "Audio"
+msgstr "Áudio"
+
+msgid "Video"
+msgstr "Vídeo"
+
+msgid "ZIP archive"
+msgstr "Arquivo ZIP"
+
+msgid "Compressed archive"
+msgstr "Arquivo compactado"
+
+msgid "Source code"
+msgstr "Código-fonte"
+
+msgid "HTML page"
+msgstr "Página HTML"
+
+msgid "Configuration file"
+msgstr "Configuração"
+
+msgid "App shortcut"
+msgstr "Atalho de app"
+
+msgid "Program (AppImage)"
+msgstr "Programa (AppImage)"
+
+msgid "Installation package"
+msgstr "Pacote de instalação"
+
+msgid "Disk image"
+msgstr "Imagem de disco"
+
+msgid "Document"
+msgstr "Documento"
+
+msgid "{ext} document"
+msgstr "Documento {ext}"
+
+msgid "{n} item"
+msgid_plural "{n} items"
+msgstr[0] "{n} item"
+msgstr[1] "{n} itens"
+
+msgid "Kind"
+msgstr "Tipo"
+
+msgid "Where"
+msgstr "Local"
+
+msgid "Modified"
+msgstr "Modificado"
+
+msgid "Permissions"
+msgstr "Permissões"
+
+msgid "Archive"
+msgstr "Arquivo"
+
+msgid "just now"
+msgstr "agora"
+
+msgid "{n} min ago"
+msgstr "há {n} min"
+
+msgid "{n} h ago"
+msgstr "há {n} h"
+
+msgid "yesterday"
+msgstr "ontem"
+
+msgid "{n} day ago"
+msgid_plural "{n} days ago"
+msgstr[0] "há {n} dia"
+msgstr[1] "há {n} dias"
+
+# Grupos do launcher (applications/apps.rs, `group_label`)
+msgid "Internet"
+msgstr "Internet"
+
+msgid "Office"
+msgstr "Escritório"
+
+msgid "Graphics"
+msgstr "Gráficos"
+
+msgid "Multimedia"
+msgstr "Multimídia"
+
+msgid "Development"
+msgstr "Desenvolvimento"
+
+msgid "Games"
+msgstr "Jogos"
+
+msgid "Education"
+msgstr "Educação"
+
+msgid "Science"
+msgstr "Ciência"
+
+msgid "Utilities"
+msgstr "Utilitários"
+
+msgid "System"
+msgstr "Sistema"
+
+msgid "Settings"
+msgstr "Configurações"
+
+msgid "Other"
+msgstr "Outros"
+
+# Tabelas lidas pelos apps (traduzidas por quem mostra): apps padrão
+# (applications/default_apps.rs, CATEGORIES), itens da barra (platform/settings_file.rs,
+# BAR_ITEMS), cores de destaque (kit/theme.rs, ACCENTS) e sons de alerta
+# (platform/sounds.rs, ALERTS).
+msgid "Web browser"
+msgstr "Navegador"
+
+msgid "Email"
+msgstr "E-mail"
+
+msgid "Folders"
+msgstr "Pastas"
+
+msgid "Text"
+msgstr "Textos"
+
+msgid "Images"
+msgstr "Imagens"
+
+msgid "PDF"
+msgstr "PDF"
+
+msgid "Media controls"
+msgstr "Controles de mídia"
+
+msgid "Current player, track and playback controls"
+msgstr "Player atual, faixa e controles de reprodução"
+
+msgid "Gear that opens System Settings"
+msgstr "Engrenagem que abre as Configurações do Sistema"
+
+msgid "Sound"
+msgstr "Som"
+
+msgid "Volume and sound output"
+msgstr "Volume e saída de som"
+
+msgid "Wi-Fi"
+msgstr "Wi-Fi"
+
+msgid "Wireless networks"
+msgstr "Redes sem fio"
+
+msgid "Bluetooth"
+msgstr "Bluetooth"
+
+msgid "Wireless devices"
+msgstr "Aparelhos sem fio"
+
+msgid "Battery"
+msgstr "Bateria"
+
+msgid "Charge and time remaining (laptops only)"
+msgstr "Carga e tempo restante (só em notebooks)"
+
+msgid "Control Center"
+msgstr "Central de controle"
+
+msgid "Wi-Fi, Bluetooth, Do Not Disturb, brightness and sound in one panel"
+msgstr "Wi-Fi, Bluetooth, Não perturbe, brilho e som num painel só"
+
+msgid "Blue"
+msgstr "Azul"
+
+msgid "Purple"
+msgstr "Roxo"
+
+msgid "Pink"
+msgstr "Rosa"
+
+msgid "Red"
+msgstr "Vermelho"
+
+msgid "Orange"
+msgstr "Laranja"
+
+msgid "Yellow"
+msgstr "Amarelo"
+
+msgid "Green"
+msgstr "Verde"
+
+msgid "Graphite"
+msgstr "Grafite"
+
+msgid "Glass"
+msgstr "Vidro"
+
+msgid "Drop"
+msgstr "Gota"
+
+msgid "Bell"
+msgstr "Sino"
+
+msgid "Pop"
+msgstr "Pop"

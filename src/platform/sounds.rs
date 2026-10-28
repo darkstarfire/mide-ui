@@ -22,8 +22,9 @@ const RATE: u32 = 48_000;
 /// Muda quando um som muda: o tema é refeito.
 const VERSION: &str = "5";
 
-/// Sons de alerta oferecidos: chave, nome na tela.
-pub const ALERTS: &[(&str, &str)] = &[("vidro", "Vidro"), ("gota", "Gota"), ("sino", "Sino"), ("pop", "Pop")];
+/// Sons de alerta oferecidos: chave (gravada) e nome na tela, em inglês (quem mostra
+/// passa por [`tr`](crate::kit::tr)).
+pub const ALERTS: &[(&str, &str)] = &[("vidro", "Glass"), ("gota", "Drop"), ("sino", "Bell"), ("pop", "Pop")];
 
 /// Os eventos do tema: nome do freedesktop e o desenho.
 const EVENTS: &[&str] = &[
@@ -134,7 +135,7 @@ pub fn ensure_theme() -> Option<PathBuf> {
     }
     let stereo = dir.join("stereo");
     fs::create_dir_all(&stereo).ok()?;
-    fs::write(dir.join("index.theme"), "[Sound Theme]\nName=mide\nComment=Sons do mide (feitos para o mide)\nDirectories=stereo\n\n[stereo]\nOutputProfile=stereo\n").ok()?;
+    fs::write(dir.join("index.theme"), "[Sound Theme]\nName=mide\nComment=mide system sounds\nDirectories=stereo\n\n[stereo]\nOutputProfile=stereo\n").ok()?;
     for name in EVENTS {
         write_wav(&stereo.join(format!("{name}.wav")), &synth(name)).ok()?;
     }
