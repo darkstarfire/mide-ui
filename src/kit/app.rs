@@ -224,8 +224,6 @@ impl Window {
     /// tela; as outras ficam escuras.
     pub fn lock(mut self) -> Self {
         self.lock = true;
-        // As outras telas copiam a imagem desta: todas na mesma escala.
-        self.native_scale = false;
         // Sobre o papel de parede, sempre com as cores claras.
         self.theme = Theme::default();
         self.theme_fixed = true;
@@ -1100,6 +1098,9 @@ impl Runner {
         let input = std::mem::take(&mut self.ctx.input);
         let (unlock, close) = (self.ctx.unlock_request, self.ctx.close_requested);
         self.ctx.mirror = true;
+        // As outras telas, em escala 1 (sem viewport); a principal desenha na escala
+        // dela (nítida em 125%/150%/200%).
+        crate::ui::draw::set_scale(1.0);
         for (surface, (w, h)) in targets {
             let Some(mut canvas) = Pixmap::new(w, h) else {
                 continue;
@@ -1123,6 +1124,7 @@ impl Runner {
         // O que importa (teclas, desbloquear) é da tela principal. Um desbloqueio pedido
         // aqui também vale (nunca se perde).
         self.ctx.mirror = false;
+        crate::ui::draw::set_scale(self.scale);
         self.ctx.input = input;
         self.ctx.unlock_request |= unlock;
         self.ctx.close_requested = close;
