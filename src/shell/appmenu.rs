@@ -35,6 +35,18 @@ pub struct Registration {
 pub struct Registry(Arc<Mutex<Vec<Registration>>>);
 
 impl Registry {
+    /// Menu (nome no barramento e objeto) registrado para esta janela. No X11 o número
+    /// é o da janela X (o app registra com ele): é o jeito certo de achar o menu de uma
+    /// janela X11, que no mide chega pelo `xwayland-satellite` (o processo da janela
+    /// Wayland é o do satellite, e um processo pode ter várias janelas).
+    pub fn menu_for_window(&self, window: u32) -> Option<(String, String)> {
+        if window == 0 {
+            return None;
+        }
+        let list = self.0.lock().ok()?;
+        list.iter().rev().find(|r| r.window == window).map(|r| (r.sender.clone(), r.path.clone()))
+    }
+
     /// Menu (nome no barramento e objeto) do app com este `app_id`, o registro mais novo.
     pub fn menu_for_app(&self, app_id: &str, pid: u32) -> Option<(String, String)> {
         let app = app_id.to_lowercase();
@@ -80,6 +92,9 @@ impl Registry {
 /// O nome do processo bate com o app: igual, ou um começa com o outro separado por
 /// "-" ou "." (`google-chrome` e `chrome`, `org.kde.kate` e `kate`).
 fn matches_app(name: &str, app: &str) -> bool {
+    // Programas que rodam por um executável "de verdade" com sufixo (`soffice.bin`,
+    // `firefox-bin`): vale o nome sem ele.
+    let name = name.strip_suffix(".bin").or_else(|| name.strip_suffix("-bin")).unwrap_or(name);
     if name.is_empty() {
         return false;
     }
@@ -227,12 +242,57 @@ pub struct Item {
 
 /// Lê o menu (ou o submenu `parent`, com todos os níveis abaixo).
 pub fn layout(conn: &zbus::blocking::Connection, sender: &str, path: &str, parent: i32) -> Option<Vec<Item>> {
-    let proxy = zbus::blocking::Proxy::new(conn, sender.to_string(), path.to_string(), "com.canonical.dbusmenu").ok()?;
+    layout_checked(conn, sender, path, parent).ok()
+}
+
+/// Como [`layout`], com o motivo quando não dá para ler (para o log: "menu de X não
+/// lido: ..."). Submenus que o app só preenche na hora de mostrar (vazios, com
+/// `children-display = submenu`) recebem o `AboutToShow` e são lidos de novo.
+pub fn layout_checked(conn: &zbus::blocking::Connection, sender: &str, path: &str, parent: i32) -> Result<Vec<Item>, String> {
+    let proxy = zbus::blocking::Proxy::new(conn, sender.to_string(), path.to_string(), "com.canonical.dbusmenu").map_err(|e| e.to_string())?;
     // O app pode preencher o submenu na hora (é o que ele espera antes de mostrar).
     let _: Result<bool, _> = proxy.call("AboutToShow", &(parent,));
-    let (_revision, root): (u32, OwnedValue) = proxy.call("GetLayout", &(parent, -1i32, Vec::<String>::new())).ok()?;
-    let root = parse_node(&root)?;
-    Some(root.children)
+    let root = get_layout(&proxy, parent)?;
+    let mut lazy = Vec::new();
+    let mut root = parse_node_lazy(&root, &mut lazy).ok_or_else(|| "resposta do GetLayout em formato desconhecido".to_string())?;
+    // Até 32 submenus preguiçosos por leitura (cada um é uma ida ao app).
+    for id in lazy.into_iter().take(32) {
+        let _: Result<bool, _> = proxy.call("AboutToShow", &(id,));
+        let Ok(sub) = get_layout(&proxy, id) else {
+            continue;
+        };
+        if let Some(sub) = parse_node(&sub) {
+            fill(&mut root.children, id, sub.children);
+        }
+    }
+    Ok(root.children)
+}
+
+/// Resposta do `GetLayout`: o nó pedido. A especificação manda `(u(ia{sv}av))` (Qt,
+/// Chrome, Electron, LibreOffice), mas há quem mande o nó num variant, `(uv)` (os
+/// próprios menus do mide-ui até a versão 0.1): o corpo é lido como estrutura, com o
+/// tipo que vier. Ler como `(u32, OwnedValue)` só aceitava o segundo e recusava os
+/// menus de todos os apps de verdade ("Signature mismatch").
+fn get_layout(proxy: &zbus::blocking::Proxy<'_>, parent: i32) -> Result<OwnedValue, String> {
+    let msg = proxy.call_method("GetLayout", &(parent, -1i32, Vec::<String>::new())).map_err(|e| format!("GetLayout: {e}"))?;
+    let body = msg.body();
+    let reply: zbus::zvariant::Structure<'_> = body.deserialize().map_err(|e| format!("GetLayout: resposta {} ilegível: {e}", body.signature()))?;
+    let root = reply.fields().get(1).ok_or_else(|| "GetLayout: resposta sem o nó".to_string())?;
+    root.try_to_owned().map_err(|e| format!("GetLayout: {e}"))
+}
+
+/// Põe os filhos lidos depois no item `id` (em qualquer nível).
+fn fill(items: &mut [Item], id: i32, children: Vec<Item>) -> bool {
+    for item in items {
+        if item.id == id {
+            item.children = children;
+            return true;
+        }
+        if fill(&mut item.children, id, children.clone()) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Avisa o app que o item foi clicado.
@@ -255,6 +315,12 @@ pub(crate) fn parse_for_test(value: &Value<'_>) -> Option<Item> {
 
 /// Nó do `GetLayout`: `(id, propriedades, filhos)`.
 fn parse_node(value: &Value<'_>) -> Option<Item> {
+    parse_node_lazy(value, &mut Vec::new())
+}
+
+/// Como [`parse_node`], juntando em `lazy` os submenus ainda vazios (o app preenche
+/// depois do `AboutToShow`).
+fn parse_node_lazy(value: &Value<'_>, lazy: &mut Vec<i32>) -> Option<Item> {
     let value = match value {
         Value::Value(inner) => inner.as_ref(),
         other => other,
@@ -278,7 +344,7 @@ fn parse_node(value: &Value<'_>) -> Option<Item> {
         _ => HashMap::new(),
     };
     let children: Vec<Item> = match field(2) {
-        Some(Value::Array(a)) => a.iter().filter_map(parse_node).collect(),
+        Some(Value::Array(a)) => a.iter().filter_map(|v| parse_node_lazy(v, lazy)).collect(),
         _ => Vec::new(),
     };
     let text = |key: &str| props.get(key).and_then(|v| <&str>::try_from(&**v).ok().map(str::to_string));
@@ -288,6 +354,9 @@ fn parse_node(value: &Value<'_>) -> Option<Item> {
         return None;
     }
     let separator = text("type").as_deref() == Some("separator");
+    if children.is_empty() && id != 0 && text("children-display").as_deref() == Some("submenu") {
+        lazy.push(id);
+    }
     let checked = text("toggle-type").filter(|t| !t.is_empty()).map(|_| {
         props.get("toggle-state").and_then(|v| i32::try_from(&**v).ok()).unwrap_or(0) == 1
     });
@@ -384,11 +453,40 @@ mod tests {
     }
 
     #[test]
+    fn submenu_vazio_fica_para_depois() {
+        let mut props = Dict::new(&Signature::Str, &Signature::Variant);
+        props.append(Value::from("label".to_string()), Value::Value(Box::new(Value::from("Recentes".to_string())))).unwrap();
+        props.append(Value::from("children-display".to_string()), Value::Value(Box::new(Value::from("submenu".to_string())))).unwrap();
+        let lazy_node: Value<'static> = StructureBuilder::new().add_field(7i32).add_field(Value::Dict(props)).add_field(Value::Array(Array::new(&Signature::Variant))).build().unwrap().into();
+        let root = node(0, "", vec![node(1, "Arquivo", vec![lazy_node])]);
+        let mut lazy = Vec::new();
+        let item = parse_node_lazy(&root, &mut lazy).unwrap();
+        assert_eq!(lazy, [7]);
+        let mut children = item.children;
+        let novo = Item { id: 8, label: "a.txt".into(), enabled: true, separator: false, checked: None, shortcut: String::new(), children: Vec::new() };
+        assert!(fill(&mut children, 7, vec![novo]));
+        assert_eq!(children[0].children[0].children[0].label, "a.txt");
+    }
+
+    #[test]
+    fn menu_pela_janela() {
+        let registry = Registry::default();
+        registry.register(Registration { window: 10, sender: ":1.5".into(), path: "/a".into(), names: vec!["soffice.bin".into()], pid: 3 });
+        registry.register(Registration { window: 11, sender: ":1.5".into(), path: "/b".into(), names: vec!["soffice.bin".into()], pid: 3 });
+        assert_eq!(registry.menu_for_window(10), Some((":1.5".into(), "/a".into())));
+        assert_eq!(registry.menu_for_window(0), None);
+        assert_eq!(registry.menu_for_window(12), None);
+    }
+
+    #[test]
     fn processo_bate_com_o_app() {
         assert!(matches_app("code", "code"));
         assert!(matches_app("chrome", "google-chrome"));
         assert!(matches_app("kate", "org.kde.kate"));
         assert!(!matches_app("code", "foot"));
         assert!(!matches_app("", "code"));
+        // Executável com sufixo: `soffice.bin` vale como `soffice`.
+        assert!(matches_app("soffice.bin", "soffice"));
+        assert!(!matches_app("soffice.bin", "libreoffice-writer"));
     }
 }
