@@ -154,6 +154,12 @@ msgstr "Minimizar"
 msgid "Zoom"
 msgstr "Zoom"
 
+msgid "Enter Full Screen"
+msgstr "Entrar em tela cheia"
+
+msgid "Exit Full Screen"
+msgstr "Sair da tela cheia"
+
 msgid "Close"
 msgstr "Fechar"
 

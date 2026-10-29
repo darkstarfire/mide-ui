@@ -623,12 +623,14 @@ pub enum TabAction {
 }
 
 /// Pedido de um app de conteúdo inteiro à janela: começar a mover (com o botão
-/// segurado), minimizar, maximizar ou restaurar, fechar.
+/// segurado), minimizar, maximizar ou restaurar, entrar ou sair da tela cheia, fechar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowRequest {
     Move,
     Minimize,
     ToggleMaximize,
+    /// Botão verde (como no Mac): tela cheia; com ⌥ (Alt), `ToggleMaximize`.
+    ToggleFullscreen,
     Close,
 }
 
@@ -701,6 +703,9 @@ pub struct Ctx {
     pub content_window: bool,
     /// A janela está maximizada (ou presa a um lado da tela).
     pub maximized: bool,
+    /// A janela está em tela cheia: os botões da janela somem (o compositor mostra a
+    /// barra de título dele na faixa revelada no topo, como no Mac).
+    pub fullscreen: bool,
     /// Janela de tamanho fixo (`Window::fixed_size`): minimizar e maximizar desativados.
     pub fixed_size: bool,
     /// Acorda a janela de outra thread (`Ui::waker`).
@@ -806,6 +811,7 @@ impl Ctx {
             drag_area_handled: false,
             content_window: false,
             maximized: false,
+            fullscreen: false,
             fixed_size: false,
             waker: None,
             input_region: None,
@@ -1259,6 +1265,11 @@ impl<'a> Ui<'a> {
         if std::mem::replace(&mut self.ctx.controls_drawn, true) {
             return width;
         }
+        // Em tela cheia, os botões somem (como no Mac): o compositor desce a barra de
+        // título dele, com as luzes, quando o ponteiro vai ao topo da tela.
+        if self.ctx.fullscreen {
+            return width;
+        }
         let group = (x - 4.0, y - 4.0, width + 8.0, LIGHT_SIZE + 8.0);
         let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
         let group_hover = !blocked && self.ctx.input.over(group);
@@ -1268,7 +1279,10 @@ impl<'a> Ui<'a> {
             self.window_close_only(x, y);
             return width;
         }
-        for (i, request) in [WindowRequest::Close, WindowRequest::Minimize, WindowRequest::ToggleMaximize].into_iter().enumerate() {
+        // Verde: tela cheia, como no Mac; com ⌥ (Alt) apertado, maximiza.
+        let alt = self.ctx.input.alt;
+        let green = if alt { WindowRequest::ToggleMaximize } else { WindowRequest::ToggleFullscreen };
+        for (i, request) in [WindowRequest::Close, WindowRequest::Minimize, green].into_iter().enumerate() {
             let id = self.ctx.id();
             let cx = x + i as f32 * LIGHT_STEP;
             let rect = (cx - 3.0, y - 3.0, LIGHT_SIZE + 6.0, LIGHT_SIZE + 6.0);
@@ -1280,6 +1294,7 @@ impl<'a> Ui<'a> {
             let tip = match request {
                 WindowRequest::Close => crate::kit::tr("Close"),
                 WindowRequest::Minimize => crate::kit::tr("Minimize"),
+                WindowRequest::ToggleFullscreen => crate::kit::tr("Enter Full Screen"),
                 _ => crate::kit::tr("Zoom"),
             };
             self.tooltip(&r, &tip);
@@ -1307,6 +1322,25 @@ impl<'a> Ui<'a> {
                     WindowRequest::Minimize => {
                         pb.move_to(mx - k - 0.6, my);
                         pb.line_to(mx + k + 0.6, my);
+                    }
+                    // Tela cheia: dois triângulos cheios, para fora (desenhados à parte).
+                    WindowRequest::ToggleFullscreen => {
+                        let mut tri = tiny_skia::PathBuilder::new();
+                        let (a, b) = (3.6, 1.6);
+                        tri.move_to(mx - a, my - a);
+                        tri.line_to(mx + b, my - a);
+                        tri.line_to(mx - a, my + b);
+                        tri.close();
+                        tri.move_to(mx + a, my + a);
+                        tri.line_to(mx - b, my + a);
+                        tri.line_to(mx + a, my - b);
+                        tri.close();
+                        if let Some(path) = tri.finish() {
+                            let mut paint = tiny_skia::Paint::default();
+                            paint.anti_alias = true;
+                            paint.set_color(color([0, 0, 0, 150]));
+                            self.canvas.fill_path(&path, &paint, tiny_skia::FillRule::Winding, crate::ui::draw::tf(), None);
+                        }
                     }
                     _ => {
                         pb.move_to(mx - k - 0.4, my);
@@ -1438,6 +1472,11 @@ impl<'a> Ui<'a> {
     /// A janela está maximizada.
     pub fn maximized(&self) -> bool {
         self.ctx.maximized
+    }
+
+    /// A janela está em tela cheia.
+    pub fn fullscreen(&self) -> bool {
+        self.ctx.fullscreen
     }
 
     /// Janela modal (diálogo): escurece a janela e mostra um painel de vidro branco no
@@ -4817,7 +4856,7 @@ impl<'a> Ui<'a> {
         // cantos arredondados da janela (Tahoe, raio 24): perto da borda direita,
         // começa e termina onde a curva do canto acaba.
         let (win_w, win_h) = self.window_size();
-        let corner = if self.ctx.content_window && !self.ctx.maximized && self.offset.0 + x + w >= win_w - 2.0 { super::theme::RADIUS_WINDOW * 0.75 } else { 0.0 };
+        let corner = if self.ctx.content_window && !self.ctx.maximized && !self.ctx.fullscreen && self.offset.0 + x + w >= win_w - 2.0 { super::theme::RADIUS_WINDOW * 0.75 } else { 0.0 };
         let top_in = (corner - (self.offset.1 + y0)).max(4.0);
         let bottom_in = (corner - (win_h - (self.offset.1 + y0 + h))).max(4.0);
         let bar = ScrollBar { id, area: (x, y0, w, h), right: x + w - 1.0, top: y0 + top_in, len: (h - top_in - bottom_in).max(40.0), view: h, content: content_h };

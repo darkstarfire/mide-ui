@@ -79,6 +79,22 @@ impl MenuItem {
 /// Ações do menu "Janela" tratadas pelo mide-ui.
 pub const MINIMIZE: &str = "mide-ui:minimizar";
 pub const ZOOM: &str = "mide-ui:zoom";
+/// Entrar ou sair da tela cheia (a janela pede ao compositor, em qualquer desktop).
+pub const FULLSCREEN: &str = "mide-ui:tela-cheia";
+
+/// A janela principal está em tela cheia? Muda o texto do item do menu Janela.
+static FULLSCREEN_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Guardado pela janela a cada `configure` (o menu Janela lê ao ser montado).
+pub fn set_fullscreen(on: bool) {
+    FULLSCREEN_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Item "Enter Full Screen"/"Exit Full Screen" do menu Janela, como no Mac (⌃⌘F).
+fn fullscreen_item() -> MenuItem {
+    let label = if FULLSCREEN_ON.load(std::sync::atomic::Ordering::Relaxed) { tr("Exit Full Screen") } else { tr("Enter Full Screen") };
+    MenuItem::action(FULLSCREEN, &label).shortcut("Ctrl+Super+F")
+}
 
 /// Menu "Janela" padrão, com os itens extras do app (se houver) depois.
 pub fn window_menu(extra: Vec<MenuItem>) -> MenuGroup {
@@ -90,6 +106,7 @@ pub fn window_menu(extra: Vec<MenuItem>) -> MenuGroup {
         items.extend([
             w("fill", tr("Fill")),
             w("center", tr("Center")),
+            fullscreen_item(),
             MenuItem::Separator,
             MenuItem::Submenu {
                 label: tr("Move & Resize").into(),
@@ -117,6 +134,7 @@ pub fn window_menu(extra: Vec<MenuItem>) -> MenuGroup {
         ]);
     } else {
         items.push(MenuItem::action(ZOOM, &tr("Zoom")));
+        items.push(fullscreen_item());
     }
     if !extra.is_empty() {
         items.push(MenuItem::Separator);

@@ -148,7 +148,7 @@ for acao in acoes {
 | `ui.toolbar_buttons(&[(ícone, reserva, marcado, ativo)])` | Grupo de botões numa cápsula de vidro (barra de ferramentas) | índice clicado |
 | `ui.toolbar_title("Título", largura_máx)` | Título da janela na barra de ferramentas (encolhe com "…") | — |
 | `ui.search_field(&mut String, "Buscar")` | Busca em cápsula, com lupa e ✕ | `.changed()` |
-| `ui.window_controls(x, y)` | Os três botões da janela (só em janela de conteúdo inteiro; a barra lateral e a barra de ferramentas já põem) | — |
+| `ui.window_controls(x, y)` | Os três botões da janela (só em janela de conteúdo inteiro; a barra lateral e a barra de ferramentas já põem). O verde entra em tela cheia (com ⌥ maximiza, como no Mac); em tela cheia os botões somem (`ui.fullscreen()`), e no mide o compositor mostra a barra de título dele ao levar o ponteiro ao topo | — |
 | `ui.window_drag_area(rect)` | O vazio do retângulo arrasta a janela; duplo clique maximiza (chamar depois dos controles da área) | — |
 | `ui.remaining_width()` | Largura que sobra na linha atual (para encolher um título) | — |
 | `ui.tab_bar(&títulos, escolhida)` | Barra de abas em cápsula, × ao passar o ponteiro e + no fim | `TabAction::Select/Close/New` |

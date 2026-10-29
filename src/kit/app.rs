@@ -466,6 +466,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         app: Box::new(app),
         menus: None,
         maximized: false,
+        fullscreen: false,
         standalone: !crate::control_client::on_mide() && window.overlay.is_none() && !window.desktop && !window.dropdown && !window.corner && !window.lock,
         client_bar: !crate::control_client::on_mide() && !window.full_size && window.overlay.is_none() && !window.desktop && !window.dropdown && !window.corner && !window.lock,
         constrained: false,
@@ -688,6 +689,8 @@ struct Runner {
     /// Menus publicados na barra superior.
     menus: Option<super::menubar::Published>,
     maximized: bool,
+    /// Em tela cheia (o verde pede para sair).
+    fullscreen: bool,
     /// Fora do mide (janela comum): o app arredonda os próprios cantos.
     standalone: bool,
     /// Fora do mide, janela que não é de conteúdo inteiro: o app desenha a barra de
@@ -749,6 +752,7 @@ struct Child {
     dirty: bool,
     last_frame: Option<Pixmap>,
     maximized: bool,
+    fullscreen: bool,
     constrained: bool,
     configured_size: (Option<NonZeroU32>, Option<NonZeroU32>),
     wanted_size: Option<(u32, u32)>,
@@ -850,6 +854,9 @@ impl Runner {
                     (super::menubar::ZOOM, Shell::Xdg(xdg)) => {
                         if self.maximized { xdg.unset_maximized() } else { xdg.set_maximized() }
                     }
+                    (super::menubar::FULLSCREEN, Shell::Xdg(xdg)) => {
+                        if self.fullscreen { xdg.unset_fullscreen() } else { xdg.set_fullscreen(None) }
+                    }
                     (a, _) if super::menubar::run_window_action(a) => {}
                     _ => self.ctx.input.menu.push(action),
                 }
@@ -898,6 +905,9 @@ impl Runner {
                     (super::menubar::ZOOM, Shell::Xdg(xdg)) => {
                         if self.maximized { xdg.unset_maximized() } else { xdg.set_maximized() }
                     }
+                    (super::menubar::FULLSCREEN, Shell::Xdg(xdg)) => {
+                        if self.fullscreen { xdg.unset_fullscreen() } else { xdg.set_fullscreen(None) }
+                    }
                     _ => {
                         self.bar_actions.push(action);
                         self.dirty = true;
@@ -905,7 +915,7 @@ impl Runner {
                 }
             }
             // Fora do mide, os cantos arredondados são do app (no mide, do compositor).
-            if self.standalone && !self.maximized && matches!(self.shell, Shell::Xdg(_)) {
+            if self.standalone && !self.maximized && !self.fullscreen && matches!(self.shell, Shell::Xdg(_)) {
                 let radius = if self.ctx.content_window { super::theme::RADIUS_WINDOW } else { 12.0 };
                 crate::ui::draw::round_corners(&mut canvas, radius * self.scale);
             }
@@ -1394,6 +1404,7 @@ impl Runner {
             dirty: true,
             last_frame: None,
             maximized: false,
+            fullscreen: false,
             constrained: false,
             configured_size: (None, None),
             wanted_size: None,
@@ -1463,12 +1474,15 @@ impl Runner {
                 Some(super::menubar::ZOOM) => {
                     if child.maximized { child.xdg.unset_maximized() } else { child.xdg.set_maximized() }
                 }
+                Some(super::menubar::FULLSCREEN) => {
+                    if child.fullscreen { child.xdg.unset_fullscreen() } else { child.xdg.set_fullscreen(None) }
+                }
                 Some(a) => {
                     super::menubar::run_window_action(a);
                 }
                 _ => {}
             }
-            if child.standalone && !child.maximized {
+            if child.standalone && !child.maximized && !child.fullscreen {
                 let radius = if child.ctx.content_window { super::theme::RADIUS_WINDOW } else { 12.0 };
                 crate::ui::draw::round_corners(&mut canvas, radius * child.scale);
             }
@@ -1662,6 +1676,9 @@ impl Runner {
                 super::ui::WindowRequest::ToggleMaximize => {
                     if child.maximized { child.xdg.unset_maximized() } else { child.xdg.set_maximized() }
                 }
+                super::ui::WindowRequest::ToggleFullscreen => {
+                    if child.fullscreen { child.xdg.unset_fullscreen() } else { child.xdg.set_fullscreen(None) }
+                }
                 super::ui::WindowRequest::Close => {
                     let id = child.id.clone();
                     if self.app.window_close_requested(&id) {
@@ -1690,6 +1707,13 @@ impl Runner {
                     xdg.unset_maximized()
                 } else {
                     xdg.set_maximized()
+                }
+            }
+            super::ui::WindowRequest::ToggleFullscreen => {
+                if self.fullscreen {
+                    xdg.unset_fullscreen()
+                } else {
+                    xdg.set_fullscreen(None)
                 }
             }
             super::ui::WindowRequest::Close => {
@@ -1724,6 +1748,8 @@ impl WindowHandler for Runner {
         if let Some(child) = self.children.iter_mut().find(|c| c.xdg.wl_surface() == window.wl_surface()) {
             child.maximized = configure.is_maximized();
             child.ctx.maximized = configure.is_maximized();
+            child.fullscreen = configure.is_fullscreen();
+            child.ctx.fullscreen = configure.is_fullscreen();
             child.ctx.input.active = Some(configure.is_activated());
             let constrained = configure.is_maximized() || configure.is_fullscreen() || configure.is_tiled_left() || configure.is_tiled_right() || configure.is_tiled_top() || configure.is_tiled_bottom();
             let was_constrained = std::mem::replace(&mut child.constrained, constrained);
@@ -1749,6 +1775,10 @@ impl WindowHandler for Runner {
         }
         self.maximized = configure.is_maximized();
         self.ctx.maximized = configure.is_maximized();
+        self.fullscreen = configure.is_fullscreen();
+        self.ctx.fullscreen = configure.is_fullscreen();
+        // O menu Janela diz "Entrar"/"Sair da tela cheia" pela janela principal.
+        super::menubar::set_fullscreen(self.fullscreen);
         let active = configure.is_activated();
         if self.ctx.input.active != Some(active) {
             self.ctx.input.active = Some(active);
