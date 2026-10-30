@@ -54,4 +54,4 @@ pub use picker::{ListPicker, PickGroup, PickItem, Picked};
 pub use screens::Screen;
 pub use textarea::{Decorations, TextDoc};
 pub use theme::{accent_key, scrollbars_always, system_accent, system_dark, Rgba, Theme, ACCENTS, RADIUS_WINDOW, TOOLBAR_HEIGHT};
-pub use ui::{ArrangedScreen, ButtonStyle, Cursor, Tool, Menu, Response, TextAreaLook, TextAreaResponse, TabAction, Tile, Ui, WindowRequest, TAG_COLORS};
+pub use ui::{ArrangedScreen, ButtonStyle, Cursor, LockField, Tool, Menu, Response, TextAreaLook, TextAreaResponse, TabAction, Tile, Ui, WindowRequest, TAG_COLORS};

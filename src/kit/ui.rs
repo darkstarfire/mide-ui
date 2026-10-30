@@ -890,6 +890,14 @@ impl Ctx {
         self.mirror = false;
     }
 
+    /// Símbolo embutido do mide-ui (ver `icons::SYMBOLS`) em `size` pontos, já na
+    /// resolução da tela, desenhado na hora (sem a espera da thread de ícones).
+    fn symbol_now(&mut self, name: &str, size: u32) -> Option<std::rc::Rc<Pixmap>> {
+        let px = (size as f32 * crate::ui::draw::scale()).round() as u32;
+        let key = format!("sym:{name}@{px}");
+        self.icons.entry(key).or_insert_with(|| crate::icons::symbol(name, px).map(std::rc::Rc::new)).clone()
+    }
+
     /// Ícone pelo nome (ou o primeiro que existir de `names`), no tamanho pedido. Se
     /// ainda não foi carregado, pede à thread de ícones e devolve `None` (o componente
     /// desenha sem ícone e o ícone aparece num dos próximos quadros). `app`: nome de
@@ -3409,6 +3417,108 @@ impl<'a> Ui<'a> {
         r
     }
 
+    /// Campo das telas de login e de bloqueio, como no Mac: cápsula de vidro sobre o
+    /// papel de parede, texto branco, o aviso de Caps Lock e o botão de seguir (→) à
+    /// direita quando há algo digitado, ou a roda girando enquanto confere (`busy`).
+    /// `secret` mostra bolinhas. Só o campo com `focused` recebe o teclado (com dois
+    /// campos, nome e senha, o app escolhe qual); clicar no campo responde `clicked`.
+    /// Enter ou o → respondem `submitted`; Esc e Ctrl+U apagam tudo.
+    pub fn lock_field(&mut self, value: &mut String, placeholder: &str, look: LockField) -> Response {
+        let rect = self.alloc(None, 36.0);
+        let mut r = if look.focused && !look.busy {
+            self.password_edit(value, rect)
+        } else {
+            let id = self.ctx.id();
+            Response { rect, id, ..Default::default() }
+        };
+        let over = self.over(rect);
+        r.hovered = over;
+        r.clicked = over && self.ctx.input.released;
+        let (x, y, w, h) = rect;
+        // Vidro: claro e translúcido, borda fina mais clara em cima.
+        fill_rounded(self.canvas, x, y + 1.0, w, h, h / 2.0, color([0, 0, 0, 22]));
+        fill_rounded(self.canvas, x, y, w, h, h / 2.0, color([255, 255, 255, if look.focused { 58 } else { 40 }]));
+        if let Some(path) = rounded_rect(x + 0.5, y + 0.5, w - 1.0, h - 1.0, (h - 1.0) / 2.0) {
+            let mut paint = Paint { anti_alias: true, ..Default::default() };
+            paint.shader = crate::ui::draw::vertical_gradient(y, y + h, crate::ui::draw::rgba(255, 255, 255, 120), crate::ui::draw::rgba(255, 255, 255, 50));
+            self.canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, crate::ui::draw::tf(), None);
+        }
+        let font = 14.0;
+        let ty = y + (h - font * 1.25) / 2.0;
+        let tx = x + 16.0;
+        // Lado direito: → (ou a roda) e, antes dele, o Caps Lock.
+        let button = 26.0;
+        let (bx, by) = (x + w - button - 5.0, y + (h - button) / 2.0);
+        let mut right = x + w - 12.0;
+        if look.busy {
+            self.ctx.ticking = true;
+            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| (d.as_millis() % 100_000) as f32 / 1000.0);
+            let (cx, cy, rad) = (bx + button / 2.0, by + button / 2.0, 7.5);
+            let start = t * 5.5;
+            let mut pb = PathBuilder::new();
+            for i in 0..=24 {
+                let a = start + i as f32 / 24.0 * 4.4;
+                let (px, py) = (cx + rad * a.cos(), cy + rad * a.sin());
+                if i == 0 { pb.move_to(px, py) } else { pb.line_to(px, py) }
+            }
+            if let Some(path) = pb.finish() {
+                let mut paint = Paint { anti_alias: true, ..Default::default() };
+                paint.set_color(color([255, 255, 255, 230]));
+                let stroke = Stroke { width: 2.0, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+                self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+            }
+            right = bx - 4.0;
+        } else if look.submit && !value.is_empty() {
+            let hit = (bx, by, button, button);
+            let hot = self.over(hit);
+            fill_rounded(self.canvas, bx, by, button, button, button / 2.0, color([255, 255, 255, if hot { 120 } else { 70 }]));
+            if let Some(icon) = self.ctx.symbol_now("go-next-symbolic", 14) {
+                crate::ui::draw::blit_tinted(self.canvas, &icon, (bx + (button - 14.0) / 2.0).round() as i32, (by + (button - 14.0) / 2.0).round() as i32, [255, 255, 255]);
+            }
+            if hot && self.ctx.input.released {
+                r.submitted = true;
+                self.ctx.repaint = true;
+            }
+            right = bx - 4.0;
+        }
+        if look.secret && look.focused && self.ctx.input.caps_lock {
+            if let Some(icon) = self.ctx.symbol_now("caps-lock-symbolic", 14) {
+                right -= 18.0;
+                crate::ui::draw::blit_tinted(self.canvas, &icon, right.round() as i32, (y + (h - 14.0) / 2.0).round() as i32, [255, 255, 255]);
+                right -= 4.0;
+            }
+        }
+        let room = (right - tx).max(10.0);
+        if value.is_empty() {
+            let shown = self.fit(placeholder, font, FontWeight::Regular, room);
+            self.draw_text(&shown, tx, ty, font, FontWeight::Regular, [255, 255, 255, 165]);
+            if look.focused && !look.busy {
+                fill_rounded(self.canvas, tx - 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
+            }
+        } else {
+            let (shown, size) = if look.secret {
+                let mut dots = "•".repeat(value.chars().count().min(60));
+                while dots.chars().count() > 1 && self.measure(&dots, font + 4.0, FontWeight::Regular) > room - 6.0 {
+                    dots.pop();
+                }
+                (dots, font + 4.0)
+            } else {
+                // Texto visível: o fim fica à vista (o cursor está nele).
+                let mut text = value.clone();
+                while text.chars().count() > 1 && self.measure(&text, font, FontWeight::Regular) > room - 6.0 {
+                    text.remove(0);
+                }
+                (text, font)
+            };
+            let tw = self.measure(&shown, size, FontWeight::Regular);
+            self.draw_text(&shown, tx, y + (h - size * 1.25) / 2.0 - if look.secret { 1.0 } else { 0.0 }, size, FontWeight::Regular, [255, 255, 255, 255]);
+            if look.focused && !look.busy {
+                fill_rounded(self.canvas, tx + tw + 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
+            }
+        }
+        r
+    }
+
     /// Texto pequeno em vermelho (a cor de perigo do tema): erros, como "Senha incorreta".
     pub fn error_note(&mut self, s: &str) {
         let t = self.ctx.theme.clone();
@@ -5894,4 +6004,17 @@ fn fill_menu(m: &mut Menu, items: &[super::menubar::MenuItem], chosen: &mut Opti
             }
         }
     }
+}
+
+/// Como é o campo das telas de login e de bloqueio ([`Ui::lock_field`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LockField {
+    /// Bolinhas no lugar do texto (senha).
+    pub secret: bool,
+    /// Recebe o teclado.
+    pub focused: bool,
+    /// Conferindo: a roda gira no lugar do → e o teclado fica parado.
+    pub busy: bool,
+    /// Mostra o botão → quando há algo digitado.
+    pub submit: bool,
 }

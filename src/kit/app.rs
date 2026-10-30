@@ -2041,11 +2041,15 @@ impl KeyboardHandler for Runner {
     fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
 
     fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, modifiers: Modifiers, _: RawModifiers, _: u32) {
-        let (ctx, _) = self.keyboard_ctx();
+        let (ctx, dirty) = self.keyboard_ctx();
         ctx.input.ctrl = modifiers.ctrl;
         ctx.input.shift = modifiers.shift;
         ctx.input.alt = modifiers.alt;
         ctx.input.logo = modifiers.logo;
+        if ctx.input.caps_lock != modifiers.caps_lock {
+            ctx.input.caps_lock = modifiers.caps_lock;
+            *dirty = true;
+        }
     }
 }
 

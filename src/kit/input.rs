@@ -49,6 +49,8 @@ pub struct Input {
     pub shift: bool,
     pub alt: bool,
     pub logo: bool,
+    /// Caps Lock ligado (o aviso dos campos de senha).
+    pub caps_lock: bool,
     /// Texto colado da área de transferência (Ctrl+V num campo), chegou neste quadro.
     pub paste: Option<String>,
     /// Rolagem vertical acumulada (positivo = para baixo), em pixels.

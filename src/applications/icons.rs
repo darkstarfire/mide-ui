@@ -242,6 +242,19 @@ pub const SYMBOLS: &[(&str, &str)] = &[
     ("list-add-symbolic", r##"<path d="M8 2.5v11M2.5 8h11" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>"##),
     // Fechar.
     ("window-close-symbolic", r##"<path d="m3.5 3.5 9 9m0-9-9 9" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>"##),
+    // Desligar: o círculo aberto em cima com o traço.
+    ("system-shutdown-symbolic", r##"<path d="M8 1.6v5.6" stroke="#000" stroke-width="1.5" stroke-linecap="round"/><path d="M4.7 3.9a5.3 5.3 0 1 0 6.6 0" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>"##),
+    // Reiniciar: a volta com a ponta da seta.
+    ("system-reboot-symbolic", r##"<path d="M13.2 8.4A5.2 5.2 0 1 1 11.6 4.3" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round"/><path d="M12.2 1.4v3.4H8.8" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>"##),
+    // Repousar: a lua.
+    ("system-suspend-symbolic", r##"<path d="M13.6 9.8A6 6 0 0 1 6.2 2.4a6 6 0 1 0 7.4 7.4z" fill="none" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/>"##),
+    // Seguir (enviar a senha) e voltar.
+    ("go-next-symbolic", r##"<path d="M2.5 8h10.6M9 3.8 13.2 8 9 12.2" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"##),
+    ("go-previous-symbolic", r##"<path d="M13.5 8H2.9M7 3.8 2.8 8 7 12.2" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"##),
+    // Caps Lock ligado: a seta oca com a barra embaixo.
+    ("caps-lock-symbolic", r##"<path d="M8 1.6 2.4 7.6h3.1v3.2h5V7.6h3.1z" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.5 13.6h5" stroke="#000" stroke-width="1.4" stroke-linecap="round"/>"##),
+    // Pessoa (outro usuário, foto que falta).
+    ("avatar-default-symbolic", r##"<circle cx="8" cy="4.6" r="3.1" fill="#000"/><path d="M1.8 15.2c0-3.6 2.8-6 6.2-6s6.2 2.4 6.2 6z" fill="#000"/>"##),
 ];
 
 /// Símbolo embutido pelo nome (ver [`SYMBOLS`]), no tamanho pedido.
