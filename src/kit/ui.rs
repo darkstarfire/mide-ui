@@ -3498,10 +3498,10 @@ impl<'a> Ui<'a> {
         } else {
             let (shown, size) = if look.secret {
                 let mut dots = "•".repeat(value.chars().count().min(60));
-                while dots.chars().count() > 1 && self.measure(&dots, font + 4.0, FontWeight::Regular) > room - 6.0 {
+                while dots.chars().count() > 1 && self.measure(&dots, font + 9.0, FontWeight::Regular) > room - 6.0 {
                     dots.pop();
                 }
-                (dots, font + 4.0)
+                (dots, font + 9.0)
             } else {
                 // Texto visível: o fim fica à vista (o cursor está nele).
                 let mut text = value.clone();
@@ -3511,7 +3511,7 @@ impl<'a> Ui<'a> {
                 (text, font)
             };
             let tw = self.measure(&shown, size, FontWeight::Regular);
-            self.draw_text(&shown, tx, y + (h - size * 1.25) / 2.0 - if look.secret { 1.0 } else { 0.0 }, size, FontWeight::Regular, [255, 255, 255, 255]);
+            self.draw_text(&shown, tx, y + (h - size * 1.25) / 2.0 - if look.secret { 1.5 } else { 0.0 }, size, FontWeight::Regular, [255, 255, 255, 255]);
             if look.focused && !look.busy {
                 fill_rounded(self.canvas, tx + tw + 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
             }
