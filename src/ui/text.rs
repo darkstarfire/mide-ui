@@ -5,6 +5,52 @@ use std::collections::HashMap;
 use cosmic_text::{Attrs, Buffer, CacheKeyFlags, Color, Family, FontSystem, Metrics, Shaping, Stretch, Style, SwashCache, SwashContent, SwashImage, Weight};
 use tiny_skia::Pixmap;
 
+/// Família do texto da interface quando o mide instala as fontes dele.
+pub const UI_FAMILY: &str = "Noto Sans";
+
+/// Fontes do sistema mais as do mide (`<pasta de dados>/mide/fonts`, que o
+/// `mide-update` instala), com a família do texto da interface escolhida: a do mide,
+/// senão a "sans-serif" do fontconfig (a dos outros apps). Sozinho, o cosmic-text pede
+/// a "Open Sans" e, sem ela, cai numa fonte qualquer: em máquinas sem a Noto Sans, as
+/// letras saíam espaçadas e com outro desenho.
+pub fn font_system() -> FontSystem {
+    let mut fonts = FontSystem::new();
+    let db = fonts.db_mut();
+    for dir in mide_font_dirs() {
+        if dir.is_dir() {
+            db.load_fonts_dir(&dir);
+        }
+    }
+    let has = |db: &cosmic_text::fontdb::Database, name: &str| db.faces().any(|f| f.families.iter().any(|(n, _)| n == name));
+    let family = if has(db, UI_FAMILY) {
+        Some(UI_FAMILY.to_string())
+    } else {
+        std::process::Command::new("fc-match")
+            .args(["-f", "%{family[0]}", "sans-serif"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|name| has(db, name))
+    };
+    if let Some(family) = family {
+        db.set_sans_serif_family(family);
+    }
+    fonts
+}
+
+/// Pastas das fontes do mide: a do usuário e as do sistema (`XDG_DATA_DIRS`).
+fn mide_font_dirs() -> Vec<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let data_home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".local/share"));
+    let data_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    std::iter::once(data_home)
+        .chain(data_dirs.split(':').filter(|d| !d.is_empty()).map(std::path::PathBuf::from))
+        .map(|d| d.join("mide/fonts"))
+        .collect()
+}
+
 /// Peso da fonte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FontWeight {
@@ -181,7 +227,7 @@ impl Text {
 
     pub fn new() -> Self {
         Self {
-            fonts: FontSystem::new(),
+            fonts: font_system(),
             swash: SwashCache::new(),
             widths: HashMap::new(),
             images: HashMap::new(),
@@ -777,5 +823,19 @@ mod tests {
             text.draw(&mut pix, &s, 0.0, 0.0, 14.0, FontWeight::Regular, [0, 0, 0, 255]);
         }
         println!("40 textos novos (medir + desenhar): {:.2} ms", t.elapsed().as_secs_f32() * 1e3);
+    }
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::*;
+
+    #[test]
+    fn familia_da_interface_existe() {
+        // A família escolhida para o texto da interface tem de existir (a do mide ou a
+        // do sistema): nunca um nome que cai numa fonte qualquer.
+        let fonts = font_system();
+        let name = fonts.db().family_name(&Family::SansSerif).to_string();
+        assert!(fonts.db().faces().any(|f| f.families.iter().any(|(n, _)| *n == name)), "{name}");
     }
 }
