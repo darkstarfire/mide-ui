@@ -105,10 +105,13 @@ pub struct TextAreaResponse {
     pub pointer_index: Option<usize>,
 }
 
-/// Imagem de um ladrilho (`tile`): ícone do tema pelo nome ou uma imagem pronta.
+/// Imagem de um ladrilho (`tile`): ícone do tema pelo nome, uma imagem pronta ou um
+/// símbolo pequeno no meio da área (o "+" de "Adicionar imagem…", a 1/3 do lado menor;
+/// os nomes de `icons::SYMBOLS`, como `list-add-symbolic`).
 pub enum Tile<'p> {
     Icon(&'p str),
     Image(&'p Pixmap),
+    Symbol(&'p str),
 }
 
 /// Menu de contexto aberto: de qual componente e onde (na janela).
@@ -4011,6 +4014,17 @@ impl<'a> Ui<'a> {
                 let (pw, ph) = (pix.width() as f32, pix.height() as f32);
                 let (dx, dy) = (ix + (fw - pw) / 2.0, iy + (fh - ph) / 2.0);
                 crate::ui::draw::blit_image(self.canvas, pix, dx.floor(), dy.floor());
+            }
+            Tile::Symbol(name) => {
+                // Símbolo embutido do kit, na cor do texto secundário (sem ele, do tema).
+                let side = (iw.min(ih) / 3).max(8);
+                let (dx, dy) = (ix + (fw - side as f32) / 2.0, iy + (fh - side as f32) / 2.0);
+                if let Some(icon) = self.ctx.symbol_now(name, side) {
+                    let c = t.text_secondary;
+                    crate::ui::draw::blit_tinted(self.canvas, &icon, dx.round() as i32, dy.round() as i32, [c[0], c[1], c[2]]);
+                } else if let Some(icon) = self.ctx.icon(&[name], side, false) {
+                    crate::ui::draw::blit(self.canvas, &icon, dx as i32, dy as i32, 1.0);
+                }
             }
             Tile::Icon(name) => {
                 let side = iw.min(ih);
