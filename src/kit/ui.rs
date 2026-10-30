@@ -752,6 +752,9 @@ pub struct Ctx {
     /// O compositor sabe pôr vidro nesta janela (falso numa janela filha quando ele não
     /// tem `child_glass`: o vidro dela iria para a principal). Sem isso, tudo opaco.
     pub glass_allowed: bool,
+    /// Campo de texto com o foco neste quadro (retângulo na janela, em pontos): a janela
+    /// avisa o compositor (`zwp_text_input_v3`) e o teclado na tela aparece.
+    pub text_input: Option<(f32, f32, f32, f32)>,
 }
 
 /// O que o passe da tela principal deixou no `Ctx` e que um passe de outra tela não
@@ -830,6 +833,7 @@ impl Ctx {
             window_id: None,
             window_glass: false,
             glass_allowed: true,
+            text_input: None,
         }
     }
 
@@ -985,6 +989,7 @@ impl Ctx {
     /// Começo de um quadro: os ids voltam a contar do início.
     pub fn begin_frame(&mut self) {
         self.next_id = 1;
+        self.text_input = None;
         self.reveal = None;
         self.repaint = false;
         self.hover_claimed = false;
@@ -3157,6 +3162,13 @@ impl<'a> Ui<'a> {
         self.ctx.memory.modal_drawn = true;
     }
 
+    /// Área de texto própria do app (editor, terminal) com o foco: o compositor fica
+    /// sabendo (`zwp_text_input_v3`) e o teclado na tela aparece, como nos campos do kit.
+    /// `rect` é o retângulo da área (onde o cursor está), relativo a este `Ui`.
+    pub fn wants_text_input(&mut self, rect: (f32, f32, f32, f32)) {
+        self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
+    }
+
     /// Campo de texto de uma linha. Clique dá o foco; Enter responde `submitted`.
     pub fn text_input(&mut self, value: &mut String, placeholder: &str) -> Response {
         use super::textedit::Edit;
@@ -3193,6 +3205,7 @@ impl<'a> Ui<'a> {
         }
         let focused = self.ctx.memory.focus == Some(id);
         if focused {
+            self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
             let mut edit = self.ctx.memory.edit;
             edit.clamp(value);
             let before = value.clone();
@@ -3528,6 +3541,7 @@ impl<'a> Ui<'a> {
     /// Teclas de um campo de senha: texto, colar, Backspace (com Ctrl apaga tudo), Esc e
     /// Ctrl+U apagam tudo, Enter responde `submitted`.
     fn password_edit(&mut self, value: &mut String, rect: (f32, f32, f32, f32)) -> Response {
+        self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
         let id = self.ctx.id();
         let mut r = Response { rect, id, ..Default::default() };
         let input = self.ctx.input.clone();
@@ -3633,6 +3647,7 @@ impl<'a> Ui<'a> {
         let focused = self.ctx.memory.focus == Some(id);
         let mut moved = false;
         if focused {
+            self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
             doc.edit.clamp(&doc.text);
             let before = (doc.edit, doc.version);
             if self.ctx.input.down && !self.ctx.input.pressed && self.ctx.memory.active == Some(id) {

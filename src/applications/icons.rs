@@ -253,6 +253,20 @@ pub const SYMBOLS: &[(&str, &str)] = &[
     ("go-previous-symbolic", r##"<path d="M13.5 8H2.9M7 3.8 2.8 8 7 12.2" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"##),
     // Caps Lock ligado: a seta oca com a barra embaixo.
     ("caps-lock-symbolic", r##"<path d="M8 1.6 2.4 7.6h3.1v3.2h5V7.6h3.1z" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.5 13.6h5" stroke="#000" stroke-width="1.4" stroke-linecap="round"/>"##),
+    // Teclado na tela: barra de atalhos (desfazer, refazer, recortar, copiar, colar),
+    // flutuante/acoplado, esconder, shift, apagar e Enter.
+    ("edit-undo-symbolic", r##"<path d="M5 4.3 2.2 7.1 5 9.9" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.6 7.1h7.2a3.6 3.6 0 0 1 0 7.2H7.6" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>"##),
+    ("edit-redo-symbolic", r##"<path d="M11 4.3 13.8 7.1 11 9.9" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.4 7.1H6.2a3.6 3.6 0 0 0 0 7.2h2.2" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>"##),
+    ("edit-cut-symbolic", r##"<circle cx="4.4" cy="11.8" r="2.2" fill="none" stroke="#000" stroke-width="1.3"/><circle cx="11.6" cy="11.8" r="2.2" fill="none" stroke="#000" stroke-width="1.3"/><path d="M5.8 10.1 12 1.8M10.2 10.1 4 1.8" stroke="#000" stroke-width="1.3" stroke-linecap="round"/>"##),
+    ("edit-copy-symbolic", r##"<rect x="5" y="5" width="8.6" height="9.6" rx="1.8" fill="none" stroke="#000" stroke-width="1.3"/><path d="M3.2 11.2a1.5 1.5 0 0 1-1.5-1.5V3a1.5 1.5 0 0 1 1.5-1.5h6.3A1.5 1.5 0 0 1 11 3" fill="none" stroke="#000" stroke-width="1.3" stroke-linecap="round"/>"##),
+    ("edit-paste-symbolic", r##"<rect x="2.5" y="2.8" width="11" height="12" rx="1.8" fill="none" stroke="#000" stroke-width="1.3"/><rect x="5.3" y="1.2" width="5.4" height="3.1" rx="1" fill="#000"/>"##),
+    ("keyboard-float-symbolic", r##"<rect x="1.4" y="2.4" width="13.2" height="11.2" rx="2.2" fill="none" stroke="#000" stroke-width="1.1" stroke-dasharray="1.7 1.3"/><rect x="4.4" y="6.4" width="7.2" height="4.6" rx="1.1" fill="none" stroke="#000" stroke-width="1.3"/>"##),
+    ("keyboard-dock-symbolic", r##"<rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="#000" stroke-width="1.2"/><path d="M1.5 8.8h13" stroke="#000" stroke-width="1.2"/><path d="M4.2 11.2h7.6" stroke="#000" stroke-width="1.3" stroke-linecap="round"/>"##),
+    ("keyboard-hide-symbolic", r##"<rect x="1.5" y="1.4" width="13" height="8.2" rx="1.6" fill="none" stroke="#000" stroke-width="1.2"/><path d="M4 4.3h1M7.5 4.3h1M11 4.3h1M5 6.9h6" stroke="#000" stroke-width="1.2" stroke-linecap="round"/><path d="m5.4 12 2.6 2.5 2.6-2.5" fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>"##),
+    ("keyboard-shift-symbolic", r##"<path d="M8 1.8 2.2 8h3.3v5.8h5V8h3.3z" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/>"##),
+    ("keyboard-shift-on-symbolic", r##"<path d="M8 1.8 2.2 8h3.3v5.8h5V8h3.3z" fill="#000" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/>"##),
+    ("keyboard-backspace-symbolic", r##"<path d="M5.3 3h8.2A1.5 1.5 0 0 1 15 4.5v7a1.5 1.5 0 0 1-1.5 1.5H5.3L1 8z" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/><path d="m7.6 6 4 4m0-4-4 4" stroke="#000" stroke-width="1.3" stroke-linecap="round"/>"##),
+    ("keyboard-return-symbolic", r##"<path d="M13.5 2.8v4.7a2 2 0 0 1-2 2H3" fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round"/><path d="M6 6.5 3 9.5l3 3" fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>"##),
     // Pessoa (outro usuário, foto que falta).
     ("avatar-default-symbolic", r##"<circle cx="8" cy="4.6" r="3.1" fill="#000"/><path d="M1.8 15.2c0-3.6 2.8-6 6.2-6s6.2 2.4 6.2 6z" fill="#000"/>"##),
 ];

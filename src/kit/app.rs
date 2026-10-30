@@ -47,6 +47,10 @@ use smithay_client_toolkit::{
     },
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
+use smithay_client_toolkit::reexports::protocols::wp::text_input::zv3::client::{
+    zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+    zwp_text_input_v3::{self, ZwpTextInputV3},
+};
 use smithay_client_toolkit::reexports::protocols::wp::{
     fractional_scale::v1::client::{
         wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
@@ -484,6 +488,12 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         main_output: None,
         extras: Vec::new(),
         pointer_on: None,
+        text_inputs: globals.bind::<ZwpTextInputManagerV3, _, _>(&qh, 1..=1, ()).ok(),
+        text_input: None,
+        ti_surface: None,
+        ti_enabled: None,
+        ti_commits: 0,
+        ti_pending: None,
     };
 
     // Vidro de verdade só nas camadas de cima (o compositor desfoca atrás delas).
@@ -729,6 +739,16 @@ struct Runner {
     main_output: Option<String>,
     extras: Vec<Extra>,
     pointer_on: Option<wl_surface::WlSurface>,
+    /// Campos de texto para o teclado na tela (`zwp_text_input_v3`): o gerenciador, o
+    /// objeto do assento, a superfície em que ele entrou, se está ligado e onde (o
+    /// retângulo mandado por último), quantos `commit` foram mandados e o texto pronto
+    /// esperando o `done`.
+    text_inputs: Option<ZwpTextInputManagerV3>,
+    text_input: Option<ZwpTextInputV3>,
+    ti_surface: Option<wl_surface::WlSurface>,
+    ti_enabled: Option<(i32, i32, i32, i32)>,
+    ti_commits: u32,
+    ti_pending: Option<String>,
 }
 
 /// Janela filha (`Ui::open_window`): a janela do xdg-shell, o `Ctx` dela (entrada,
@@ -947,6 +967,7 @@ impl Runner {
                 break;
             }
         }
+        self.sync_text_input();
         // Senha aceita: desbloqueia e fecha (o app de bloqueio termina aqui).
         if std::mem::take(&mut self.ctx.unlock_request) {
             if let Shell::Lock { session, .. } = &self.shell {
@@ -1442,6 +1463,7 @@ impl Runner {
     fn child_frame(&mut self, i: usize) {
         let main_scale = self.scale;
         self.child_frame_inner(i);
+        self.sync_text_input();
         crate::ui::draw::set_scale(main_scale);
     }
 
@@ -1897,6 +1919,11 @@ impl SeatHandler for Runner {
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
         self.seat.get_or_insert_with(|| seat.clone());
+        if self.text_input.is_none()
+            && let Some(manager) = &self.text_inputs
+        {
+            self.text_input = Some(manager.get_text_input(&seat, qh, ()));
+        }
         if capability == Capability::Pointer && self.pointer.is_none() {
             let surface = self.compositor.create_surface(qh);
             self.pointer = self.seat_state.get_pointer_with_theme::<_, ()>(qh, &seat, self.shm.wl_shm(), surface, ThemeSpec::System).ok();
@@ -2404,6 +2431,83 @@ impl ShmHandler for Runner {
 
 delegate_registry!(Runner);
 smithay_client_toolkit::delegate_dispatch2!(Runner);
+
+impl Runner {
+    /// Avisa o compositor do campo de texto com o foco (ou de que não há mais), para o
+    /// teclado na tela aparecer e sumir. Vale a janela com o teclado (principal ou filha).
+    fn sync_text_input(&mut self) {
+        let Some(ti) = self.text_input.clone() else {
+            return;
+        };
+        let focused = self.keyboard_on.clone();
+        let rect = {
+            let (ctx, _) = self.keyboard_ctx();
+            ctx.text_input
+        };
+        // Só a superfície em que o campo de texto do compositor entrou pode ligá-lo.
+        let entered = self.ti_surface.is_some() && self.ti_surface == focused;
+        let want = rect.filter(|_| entered).map(|(x, y, w, h)| (x.round() as i32, y.round() as i32, w.round().max(1.0) as i32, h.round().max(1.0) as i32));
+        if want == self.ti_enabled {
+            return;
+        }
+        match want {
+            Some((x, y, w, h)) => {
+                if self.ti_enabled.is_none() {
+                    tracing::info!("campo de texto ativo (teclado na tela)");
+                    ti.enable();
+                    ti.set_content_type(zwp_text_input_v3::ContentHint::None, zwp_text_input_v3::ContentPurpose::Normal);
+                }
+                ti.set_cursor_rectangle(x, y, w, h);
+            }
+            None => {
+                tracing::info!("campo de texto inativo");
+                ti.disable();
+            }
+        }
+        ti.commit();
+        self.ti_commits += 1;
+        self.ti_enabled = want;
+    }
+}
+
+impl Dispatch<ZwpTextInputManagerV3, ()> for Runner {
+    fn event(_: &mut Self, _: &ZwpTextInputManagerV3, _: <ZwpTextInputManagerV3 as smithay_client_toolkit::reexports::client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+/// Texto do teclado na tela (ou de outro método de entrada): entra no campo com o foco
+/// como texto digitado. Enter, apagar e setas chegam como teclas de verdade.
+impl Dispatch<ZwpTextInputV3, ()> for Runner {
+    fn event(state: &mut Self, _: &ZwpTextInputV3, event: zwp_text_input_v3::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        match event {
+            zwp_text_input_v3::Event::Enter { surface } => {
+                state.ti_surface = Some(surface);
+                state.ti_enabled = None;
+                // O próximo quadro liga o campo, se houver um com o foco.
+                let (_, dirty) = state.keyboard_ctx();
+                *dirty = true;
+                state.dirty = true;
+            }
+            zwp_text_input_v3::Event::Leave { .. } => {
+                state.ti_surface = None;
+                state.ti_enabled = None;
+                if let Some(ti) = &state.text_input {
+                    ti.disable();
+                    ti.commit();
+                    state.ti_commits += 1;
+                }
+            }
+            zwp_text_input_v3::Event::CommitString { text } => state.ti_pending = text,
+            zwp_text_input_v3::Event::Done { .. } => {
+                if let Some(text) = state.ti_pending.take().filter(|t| !t.is_empty()) {
+                    let (ctx, dirty) = state.keyboard_ctx();
+                    ctx.input.text.push_str(&text);
+                    *dirty = true;
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 impl Dispatch<WpViewporter, ()> for Runner {
     fn event(_: &mut Self, _: &WpViewporter, _: <WpViewporter as smithay_client_toolkit::reexports::client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}

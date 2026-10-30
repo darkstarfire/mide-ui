@@ -46,6 +46,16 @@ pub const SCROLLBAR_HOLD: Duration = Duration::from_millis(1000);
 pub const SCROLLBAR_FADE: Duration = Duration::from_millis(300);
 /// Lâmpada (minimizar e restaurar).
 pub const GENIE: Duration = Duration::from_millis(650);
+/// Tela girando (sensor de orientação): a cena antiga gira e esmaece enquanto a nova
+/// entra girando, como no iPad.
+pub const SCREEN_ROTATE: Duration = Duration::from_millis(480);
+/// Ícones balançando no modo de edição do launcher: uma ida e volta (inclinando para a
+/// esquerda e para a direita, cerca de 2°).
+pub const ICON_JIGGLE: Duration = Duration::from_millis(260);
+/// Segurar o dedo (ou o botão) parado até entrar no modo de edição do launcher.
+pub const EDIT_HOLD: Duration = Duration::from_millis(550);
+/// Teclado na tela subindo/descendo e mudando entre acoplado e flutuante.
+pub const KEYBOARD_SLIDE: Duration = Duration::from_millis(220);
 
 /// Progresso de 0 a 1 de uma animação que começou em `start`.
 pub fn progress(start: std::time::Instant, duration: Duration) -> f32 {

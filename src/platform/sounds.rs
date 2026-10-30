@@ -20,7 +20,7 @@ use std::{
 
 const RATE: u32 = 48_000;
 /// Muda quando um som muda: o tema é refeito.
-const VERSION: &str = "5";
+const VERSION: &str = "6";
 
 /// Sons de alerta oferecidos: chave (gravada) e nome na tela, em inglês (quem mostra
 /// passa por [`tr`](crate::kit::tr)).
@@ -41,6 +41,7 @@ const EVENTS: &[&str] = &[
     "desktop-login",
     "device-added",
     "device-removed",
+    "keyboard-click",
 ];
 
 /// Toca um som do tema (pelo nome do freedesktop), se os efeitos estão ligados.
@@ -58,7 +59,8 @@ pub fn play(name: &str) {
         use std::sync::Mutex;
         static LAST: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-        if last.as_ref().is_some_and(|(n, t)| n == name && t.elapsed().as_millis() < 300) {
+        // (O clique do teclado na tela toca a cada tecla, mesmo seguidas.)
+        if name != "keyboard-click" && last.as_ref().is_some_and(|(n, t)| n == name && t.elapsed().as_millis() < 300) {
             return;
         }
         *last = Some((name.to_string(), std::time::Instant::now()));
@@ -270,6 +272,8 @@ pub fn synth(name: &str) -> Wave {
         // Entrada na sessão: acorde aberto, um pouco mais longo.
         "desktop-login" => mix(mix(mix(note(523.0, 1.2, 3.0, 0.22), &note(659.0, 1.1, 3.0, 0.2), 0.12), &note(784.0, 1.0, 3.2, 0.2), 0.24), &note(1047.0, 0.9, 3.5, 0.16), 0.36),
         "device-added" => mix(note(660.0, 0.15, 20.0, 0.35), &note(990.0, 0.2, 16.0, 0.35), 0.08),
+        // Teclado na tela: um toque curto e seco, baixinho.
+        "keyboard-click" => mix(noise(0.03, 260.0, 0.6, 0.35, 29), &note(1800.0, 0.02, 220.0, 0.12), 0.0),
         "device-removed" => mix(note(990.0, 0.15, 20.0, 0.35), &note(660.0, 0.2, 16.0, 0.35), 0.08),
         _ => silence(0.05),
     }
