@@ -105,6 +105,21 @@ pub struct TextAreaResponse {
     pub pointer_index: Option<usize>,
 }
 
+/// O ponteiro `p` está indo de `anchor` até o painel do submenu? Dentro do triângulo
+/// entre `anchor` (recuado 2 pontos, para tremidas da mão) e os cantos da borda de
+/// perto do painel.
+fn toward_panel(p: (f32, f32), anchor: (f32, f32), panel: (f32, f32, f32, f32)) -> bool {
+    let right = panel.0 >= anchor.0;
+    let edge = if right { panel.0 } else { panel.0 + panel.2 };
+    let apex = (if right { anchor.0 - 2.0 } else { anchor.0 + 2.0 }, anchor.1);
+    let (b, c) = ((edge, panel.1 - 4.0), (edge, panel.1 + panel.3 + 4.0));
+    let side = |a: (f32, f32), b: (f32, f32), q: (f32, f32)| (b.0 - a.0) * (q.1 - a.1) - (b.1 - a.1) * (q.0 - a.0);
+    let (d1, d2, d3) = (side(apex, b, p), side(b, c, p), side(c, apex, p));
+    let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+    !(neg && pos)
+}
+
 /// Imagem de um ladrilho (`tile`): ícone do tema pelo nome, uma imagem pronta ou um
 /// símbolo pequeno no meio da área (o "+" de "Adicionar imagem…", a 1/3 do lado menor;
 /// os nomes de `icons::SYMBOLS`, como `list-add-symbolic`).
@@ -193,21 +208,16 @@ impl Menu<'_> {
         let h = if kind == 2 { 9.0 } else { 26.0 };
         let rect = (self.x, self.y, self.w, h);
         self.y += h;
-        let hovered = kind != 2 && self.ctx.input.over(rect);
-        // Ponteiro noutra linha do menu de cima (fora do submenu aberto): fecha o
-        // submenu, como no Mac, mas só depois de um instante parado nela (indo na
-        // diagonal até o submenu, o ponteiro passa por outras linhas sem fechá-lo).
-        if hovered && !self.sub && self.ctx.memory.submenu.is_some() && !self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r)) {
-            let now = std::time::Instant::now();
-            let since = *self.ctx.memory.submenu_leave.get_or_insert(now);
-            let grace = std::time::Duration::from_millis(300);
-            if now.duration_since(since) >= grace {
-                self.ctx.memory.submenu = None;
-                self.ctx.memory.submenu_rect = None;
-                self.ctx.memory.submenu_leave = None;
-                self.ctx.repaint = true;
+        let mut hovered = kind != 2 && self.ctx.input.over(rect);
+        // Ponteiro noutra linha do menu de cima (fora do submenu aberto): como no Mac,
+        // o destaque passa para ela e o submenu fecha na hora, a não ser que o ponteiro
+        // esteja indo na direção dele (triângulo seguro): aí a linha do submenu
+        // continua a única destacada por mais um instante.
+        if hovered && !self.sub && self.ctx.memory.submenu.is_some() && !self.over_open_submenu() {
+            if self.passing_to_submenu() {
+                hovered = false;
             } else {
-                self.ctx.wake_at = Some(self.ctx.wake_at.map_or(since + grace, |w| w.min(since + grace)));
+                self.close_submenu();
             }
         } else if hovered && !self.sub {
             self.ctx.memory.submenu_leave = None;
@@ -227,6 +237,47 @@ impl Menu<'_> {
             return true;
         }
         false
+    }
+
+    /// O ponteiro está sobre o painel do submenu aberto?
+    fn over_open_submenu(&self) -> bool {
+        self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r))
+    }
+
+    /// Fora da linha do submenu aberto, o ponteiro ainda vai até ele? Cada passo de
+    /// alguns pontos tem de cair no triângulo entre a posição de antes e a borda de
+    /// perto do submenu (andando para ele); parado no caminho por 300 ms, o submenu
+    /// fecha. Pede um quadro para o fim do prazo.
+    fn passing_to_submenu(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let since = *self.ctx.memory.submenu_leave.get_or_insert(now);
+        let grace = std::time::Duration::from_millis(300);
+        if now.duration_since(since) >= grace {
+            return false;
+        }
+        let (Some(p), Some(anchor), Some(panel)) = (self.ctx.input.pointer, self.ctx.memory.submenu_anchor, self.ctx.memory.submenu_rect) else {
+            return false;
+        };
+        // Passos pequenos demais dão direções tremidas: espera andar mais.
+        if (p.0 - anchor.0).hypot(p.1 - anchor.1) >= 4.0 {
+            if !toward_panel(p, anchor, panel) {
+                return false;
+            }
+            // Andou na direção do submenu: o próximo passo parte daqui, com o prazo novo.
+            self.ctx.memory.submenu_anchor = Some(p);
+            self.ctx.memory.submenu_leave = Some(now);
+        }
+        let until = self.ctx.memory.submenu_leave.unwrap_or(now) + grace;
+        self.ctx.wake_at = Some(self.ctx.wake_at.map_or(until, |w| w.min(until)));
+        true
+    }
+
+    fn close_submenu(&mut self) {
+        self.ctx.memory.submenu = None;
+        self.ctx.memory.submenu_rect = None;
+        self.ctx.memory.submenu_leave = None;
+        self.ctx.memory.submenu_anchor = None;
+        self.ctx.repaint = true;
     }
 
     /// Escolhido: fecha o menu, e o clique não passa para o que está atrás.
@@ -279,30 +330,30 @@ impl Menu<'_> {
         let rect = (self.x, row_y, self.w, h);
         self.y += h;
         let over_row = self.ctx.input.over(rect);
-        // Outro submenu aberto e o ponteiro só de passagem por esta linha: espera.
-        let passing = self.ctx.memory.submenu.is_some_and(|open| open != idx) && self.ctx.memory.submenu_leave.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300));
-        if over_row && passing {
-            let since = self.ctx.memory.submenu_leave.unwrap_or_else(std::time::Instant::now) + std::time::Duration::from_millis(300);
-            self.ctx.wake_at = Some(self.ctx.wake_at.map_or(since, |w| w.min(since)));
-        } else if over_row && self.ctx.memory.submenu.is_some_and(|open| open != idx) && self.ctx.memory.submenu_leave.is_none() {
-            self.ctx.memory.submenu_leave = Some(std::time::Instant::now());
-            self.ctx.repaint = true;
-        }
-        if over_row && !passing && self.ctx.memory.submenu != Some(idx) && (self.ctx.memory.submenu.is_none() || self.ctx.memory.submenu_leave.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(300))) {
+        // Outro submenu aberto: o ponteiro indo até ele só passa por esta linha (sem
+        // destaque); fora do caminho, este abre na hora no lugar do outro.
+        let other_open = self.ctx.memory.submenu.is_some_and(|open| open != idx);
+        let passing = over_row && other_open && !self.over_open_submenu() && self.passing_to_submenu();
+        if over_row && !passing && self.ctx.memory.submenu != Some(idx) {
             self.ctx.memory.submenu_leave = None;
             self.ctx.memory.submenu = Some(idx);
             self.ctx.memory.submenu_rect = None;
+            self.ctx.memory.submenu_anchor = None;
             self.ctx.repaint = true;
         }
         let open = self.ctx.memory.submenu == Some(idx);
-        // De volta à linha do submenu aberto, ou dentro dele: nada a fechar.
-        if open && (over_row || self.ctx.memory.submenu_rect.is_some_and(|r| self.ctx.input.over(r))) {
+        // Na linha do submenu aberto, ou dentro dele: nada a fechar; na linha, o ponto
+        // de onde o triângulo seguro parte.
+        if open && over_row {
+            self.ctx.memory.submenu_anchor = self.ctx.input.pointer;
+        }
+        if open && (over_row || self.over_open_submenu()) {
             self.ctx.memory.submenu_leave = None;
         }
         self.rows.push(MenuRow {
             label: label.to_string(),
             kind: 4,
-            hovered: over_row || open,
+            hovered: (over_row && !passing) || open,
             icon: icon.map(str::to_string),
             shortcut: None,
             checked: false,
@@ -589,9 +640,12 @@ pub struct Memory {
     submenu: Option<usize>,
     submenu_rect: Option<(f32, f32, f32, f32)>,
     submenu_h: f32,
-    /// Quando o ponteiro saiu da linha do submenu aberto para outra (fecha depois de
-    /// um instante).
+    /// Quando o ponteiro saiu da linha do submenu aberto para outra (indo na direção
+    /// do submenu, ele fica aberto mais um instante).
     submenu_leave: Option<std::time::Instant>,
+    /// Último ponto do ponteiro na linha do submenu aberto: o vértice do "triângulo
+    /// seguro" até o submenu.
+    submenu_anchor: Option<(f32, f32)>,
     /// Largura que o menu aberto precisa para os textos caberem (do quadro anterior).
     menu_auto_w: f32,
     /// O menu abriu neste quadro: o mesmo clique (apertar e soltar no mesmo quadro)
@@ -5455,6 +5509,28 @@ fn copy_back(inner: &Pixmap, dst: &mut Pixmap, x: i32, y: i32) {
 
 #[cfg(test)]
 mod tests {
+    use super::toward_panel;
+
+    #[test]
+    fn triangulo_seguro_do_submenu() {
+        // Ponteiro em (150, 100) na linha do submenu; submenu à direita, de 210 a 440
+        // na horizontal e de 95 a 395 na vertical (alto, como o Novo arquivo).
+        let panel = (210.0, 95.0, 230.0, 300.0);
+        let anchor = (150.0, 100.0);
+        // Na diagonal para baixo e para a direita, até o submenu: continua aberto.
+        assert!(toward_panel((160.0, 110.0), anchor, panel));
+        assert!(toward_panel((170.0, 100.0), anchor, panel));
+        // Descendo ou subindo reto para outra linha do menu: fora do caminho.
+        assert!(!toward_panel((150.0, 126.0), anchor, panel));
+        assert!(!toward_panel((152.0, 74.0), anchor, panel));
+        // Voltando para a esquerda: fora.
+        assert!(!toward_panel((140.0, 100.0), anchor, panel));
+        // Submenu à esquerda (perto da borda da tela): o espelho.
+        let left = (0.0, 95.0, 100.0, 300.0);
+        assert!(toward_panel((140.0, 110.0), anchor, left));
+        assert!(!toward_panel((160.0, 110.0), anchor, left));
+    }
+
     use super::*;
     use crate::kit::theme::Theme;
 
