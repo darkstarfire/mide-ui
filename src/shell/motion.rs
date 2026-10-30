@@ -16,7 +16,7 @@ pub const OSD_FADE: Duration = Duration::from_millis(200);
 /// Fechar janela: encolhe 6% e esmaece.
 pub const CLOSE_FADE: Duration = Duration::from_millis(180);
 /// Dock aparecendo/escondendo (desliza) e a espera antes de esconder.
-pub const DOCK_SLIDE: Duration = Duration::from_millis(200);
+pub const DOCK_SLIDE: Duration = Duration::from_millis(420);
 pub const DOCK_HIDE_DELAY: Duration = Duration::from_millis(450);
 /// Pastas abrindo na lista do Arquivos (cada linha começa um pouco depois da anterior)
 /// e troca entre ícones e lista.
@@ -53,7 +53,7 @@ pub const SCREEN_ROTATE: Duration = Duration::from_millis(480);
 /// esquerda e para a direita, cerca de 2°).
 pub const ICON_JIGGLE: Duration = Duration::from_millis(260);
 /// Segurar o dedo (ou o botão) parado até entrar no modo de edição do launcher.
-pub const EDIT_HOLD: Duration = Duration::from_millis(550);
+pub const EDIT_HOLD: Duration = Duration::from_millis(1000);
 /// Teclado na tela subindo/descendo e mudando entre acoplado e flutuante.
 pub const KEYBOARD_SLIDE: Duration = Duration::from_millis(220);
 
