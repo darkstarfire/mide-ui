@@ -668,6 +668,11 @@ pub struct Memory {
     /// Divisória arrastada (`Ui::split`): componente, ponto onde o arrasto começou e o
     /// tamanho do painel nesse momento.
     split_drag: Option<(u64, f32, f32)>,
+    /// Foco de cada campo de texto, com a transição de entrar e sair (`FocusAnim`).
+    focus_anims: HashMap<u64, FocusAnim>,
+    /// Pedido de foco do app em cada campo de login/bloqueio no quadro anterior (o campo
+    /// pega o foco quando o pedido chega).
+    lock_wanted: HashMap<u64, bool>,
 }
 
 /// O que aconteceu na barra de abas (`Ui::tab_bar`).
@@ -3261,6 +3266,15 @@ impl<'a> Ui<'a> {
             self.ctx.memory.focus = None;
         }
         let focused = self.ctx.memory.focus == Some(id);
+        let anim = {
+            let anim = self.ctx.memory.focus_anims.entry(id).or_default();
+            anim.set(focused);
+            *anim
+        };
+        if focused || anim.animating() {
+            self.ctx.ticking = true;
+        }
+        let amount = anim.amount();
         if focused {
             self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
             let mut edit = self.ctx.memory.edit;
@@ -3335,10 +3349,10 @@ impl<'a> Ui<'a> {
         if search {
             // Cápsula de vidro com a lupa; o anel de foco segue a cápsula.
             capsule(self.canvas, rect, &t);
-            if focused {
+            if amount > 0.0 {
                 if let Some(path) = rounded_rect(rect.0 - 1.5, rect.1 - 1.5, rect.2 + 3.0, rect.3 + 3.0, (rect.3 + 3.0) / 2.0) {
                     let mut paint = Paint { anti_alias: true, ..Default::default() };
-                    paint.set_color(color([t.accent[0], t.accent[1], t.accent[2], 128]));
+                    paint.set_color(color([t.accent[0], t.accent[1], t.accent[2], (128.0 * amount) as u8]));
                     self.canvas.stroke_path(&path, &paint, &Stroke { width: 3.0, ..Default::default() }, crate::ui::draw::tf(), None);
                 }
             }
@@ -3364,12 +3378,15 @@ impl<'a> Ui<'a> {
         } else {
             fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
         }
-        let border = if focused { t.accent } else { t.shade(40) };
+        // A borda passa da cor normal para a de destaque com a transição do foco.
+        let (normal, accent) = (t.shade(40), t.accent);
+        let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * amount).round() as u8;
+        let border = [mix(normal[0], accent[0]), mix(normal[1], accent[1]), mix(normal[2], accent[2]), mix(normal[3], accent[3])];
         if search {
         } else if let Some(path) = rounded_rect(rect.0 + 0.5, rect.1 + 0.5, rect.2 - 1.0, rect.3 - 1.0, t.control_radius) {
             let mut paint = Paint { anti_alias: true, ..Default::default() };
             paint.set_color(color(border));
-            let width = if focused { 2.0 } else { 1.0 };
+            let width = 1.0 + amount;
             self.canvas.stroke_path(&path, &paint, &Stroke { width, ..Default::default() }, crate::ui::draw::tf(), None);
         }
         let ty = rect.1 + (rect.3 - t.font * 1.25) / 2.0;
@@ -3415,7 +3432,8 @@ impl<'a> Ui<'a> {
             fill_rounded(&mut clip, x0 + xa - 1.0, 6.0, xb - xa + 2.0, rect.3 - 12.0, 3.0, color([r_, g, b_, 70]));
         }
         self.ctx.text.draw(&mut clip, value, x0, ty - rect.1, t.font, FontWeight::Regular, t.text);
-        if edit.selection().is_none() && caret_on() {
+        let caret = self.ctx.memory.focus.and_then(|f| self.ctx.memory.focus_anims.get(&f)).is_none_or(|a| a.caret_visible());
+        if edit.selection().is_none() && caret {
             fill_rounded(&mut clip, x0 + cursor_x, 7.0, 1.5, rect.3 - 14.0, 0.5, color(t.text));
         }
         self.canvas.draw_pixmap(crate::ui::draw::px((inner.0 - 2.0).floor()), crate::ui::draw::px(rect.1.floor()), clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
@@ -3497,23 +3515,70 @@ impl<'a> Ui<'a> {
     /// Enter ou o → respondem `submitted`; Esc e Ctrl+U apagam tudo.
     pub fn lock_field(&mut self, value: &mut String, placeholder: &str, look: LockField) -> Response {
         let rect = self.alloc(None, 36.0);
-        let mut r = if look.focused && !look.busy {
-            self.password_edit(value, rect)
+        let id = self.ctx.id();
+        let over = self.over(rect);
+        // Foco como em qualquer campo do mide: clicar no campo dá o foco, clicar fora tira.
+        // `look.focused` é o pedido do app (o campo que deve receber o teclado): quando o
+        // pedido chega (ou o campo aparece pedindo), o campo pega o foco; quando o app
+        // passa o pedido para outro campo (Tab), solta. Digitar sem campo nenhum em foco
+        // devolve o foco ao campo pedido.
+        let wanted_before = self.ctx.memory.lock_wanted.insert(id, look.focused).unwrap_or(false);
+        let mut focused = self.ctx.memory.focus == Some(id);
+        if look.focused && !wanted_before {
+            focused = true;
+        } else if !look.focused && wanted_before {
+            focused = false;
+        }
+        if self.ctx.input.pressed {
+            if over {
+                focused = true;
+            } else if focused {
+                focused = false;
+            }
+        }
+        let typed = !self.ctx.input.text.is_empty() || !self.ctx.input.key_events().is_empty();
+        if !focused && look.focused && self.ctx.memory.focus.is_none() && typed {
+            focused = true;
+        }
+        if focused {
+            self.ctx.memory.focus = Some(id);
+        } else if self.ctx.memory.focus == Some(id) {
+            self.ctx.memory.focus = None;
+        }
+        let anim = {
+            let anim = self.ctx.memory.focus_anims.entry(id).or_default();
+            anim.set(focused);
+            *anim
+        };
+        if focused || anim.animating() {
+            self.ctx.ticking = true;
+        }
+        let amount = anim.amount();
+        let caret = anim.caret_visible();
+        let mut r = if focused && !look.busy {
+            self.password_edit_with(value, rect, id)
         } else {
-            let id = self.ctx.id();
             Response { rect, id, ..Default::default() }
         };
-        let over = self.over(rect);
         r.hovered = over;
         r.clicked = over && self.ctx.input.released;
         let (x, y, w, h) = rect;
-        // Vidro: claro e translúcido, borda fina mais clara em cima.
+        // Vidro: claro e translúcido, borda fina mais clara em cima. Com o foco, o fundo
+        // clareia e um anel aparece em volta, com a transição de entrar e sair.
         fill_rounded(self.canvas, x, y + 1.0, w, h, h / 2.0, color([0, 0, 0, 22]));
-        fill_rounded(self.canvas, x, y, w, h, h / 2.0, color([255, 255, 255, if look.focused { 58 } else { 40 }]));
+        fill_rounded(self.canvas, x, y, w, h, h / 2.0, color([255, 255, 255, (40.0 + 22.0 * amount) as u8]));
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, w - 1.0, h - 1.0, (h - 1.0) / 2.0) {
             let mut paint = Paint { anti_alias: true, ..Default::default() };
-            paint.shader = crate::ui::draw::vertical_gradient(y, y + h, crate::ui::draw::rgba(255, 255, 255, 120), crate::ui::draw::rgba(255, 255, 255, 50));
+            let (top, bottom) = ((120.0 + 100.0 * amount) as u8, (50.0 + 90.0 * amount) as u8);
+            paint.shader = crate::ui::draw::vertical_gradient(y, y + h, crate::ui::draw::rgba(255, 255, 255, top), crate::ui::draw::rgba(255, 255, 255, bottom));
             self.canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, crate::ui::draw::tf(), None);
+        }
+        if amount > 0.0 {
+            if let Some(path) = rounded_rect(x - 2.0, y - 2.0, w + 4.0, h + 4.0, (h + 4.0) / 2.0) {
+                let mut paint = Paint { anti_alias: true, ..Default::default() };
+                paint.set_color(color([255, 255, 255, (90.0 * amount) as u8]));
+                self.canvas.stroke_path(&path, &paint, &Stroke { width: 2.0, ..Default::default() }, crate::ui::draw::tf(), None);
+            }
         }
         let font = 14.0;
         let ty = y + (h - font * 1.25) / 2.0;
@@ -3553,7 +3618,7 @@ impl<'a> Ui<'a> {
             }
             right = bx - 4.0;
         }
-        if look.secret && look.focused && self.ctx.input.caps_lock {
+        if look.secret && focused && self.ctx.input.caps_lock {
             if let Some(icon) = self.ctx.symbol_now("caps-lock-symbolic", 14) {
                 right -= 18.0;
                 crate::ui::draw::blit_tinted(self.canvas, &icon, right.round() as i32, (y + (h - 14.0) / 2.0).round() as i32, [255, 255, 255]);
@@ -3564,11 +3629,8 @@ impl<'a> Ui<'a> {
         if value.is_empty() {
             let shown = self.fit(placeholder, font, FontWeight::Regular, room);
             self.draw_text(&shown, tx, ty, font, FontWeight::Regular, [255, 255, 255, 165]);
-            if look.focused && !look.busy {
-                self.ctx.ticking = true;
-                if caret_on() {
-                    fill_rounded(self.canvas, tx - 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
-                }
+            if caret && !look.busy {
+                fill_rounded(self.canvas, tx - 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
             }
         } else {
             let (shown, size) = if look.secret {
@@ -3587,11 +3649,8 @@ impl<'a> Ui<'a> {
             };
             let tw = self.measure(&shown, size, FontWeight::Regular);
             self.draw_text(&shown, tx, y + (h - size * 1.25) / 2.0 - if look.secret { 1.5 } else { 0.0 }, size, FontWeight::Regular, [255, 255, 255, 255]);
-            if look.focused && !look.busy {
-                self.ctx.ticking = true;
-                if caret_on() {
-                    fill_rounded(self.canvas, tx + tw + 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
-                }
+            if caret && !look.busy {
+                fill_rounded(self.canvas, tx + tw + 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
             }
         }
         r
@@ -3606,8 +3665,13 @@ impl<'a> Ui<'a> {
     /// Teclas de um campo de senha: texto, colar, Backspace (com Ctrl apaga tudo), Esc e
     /// Ctrl+U apagam tudo, Enter responde `submitted`.
     fn password_edit(&mut self, value: &mut String, rect: (f32, f32, f32, f32)) -> Response {
-        self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
         let id = self.ctx.id();
+        self.password_edit_with(value, rect, id)
+    }
+
+    /// `password_edit` com o id já tirado pelo componente.
+    fn password_edit_with(&mut self, value: &mut String, rect: (f32, f32, f32, f32), id: u64) -> Response {
+        self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
         let mut r = Response { rect, id, ..Default::default() };
         let input = self.ctx.input.clone();
         let before = value.len();
@@ -6130,6 +6194,62 @@ pub struct LockField {
     pub busy: bool,
     /// Mostra o botão → quando há algo digitado.
     pub submit: bool,
+}
+
+/// Foco de um campo de texto com a transição de entrar e sair. É o mesmo comportamento
+/// em todos os campos do mide (Launchpad, login, bloqueio, campos dos apps): o visual de
+/// foco acende e apaga em `FADE_MS`, e o cursor aparece aceso logo ao ganhar o foco
+/// (`SOLID_MS`) e depois pisca. Quem desenha o campo à mão (o Launchpad) usa este tipo
+/// direto; `text_input`, `search_field` e `lock_field` já usam.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FocusAnim {
+    focused: bool,
+    since: Option<std::time::Instant>,
+}
+
+impl FocusAnim {
+    /// Duração da transição de foco (ms).
+    pub const FADE_MS: f32 = 220.0;
+    /// Logo depois de ganhar o foco, o cursor fica aceso sem piscar por este tempo (ms).
+    pub const SOLID_MS: f32 = 1000.0;
+
+    /// Campo com foco desde já (o campo que abre recebendo o teclado).
+    pub fn focused_now() -> Self {
+        Self { focused: true, since: Some(std::time::Instant::now()) }
+    }
+
+    /// Ganha ou perde o foco (a transição começa só quando muda).
+    pub fn set(&mut self, focused: bool) {
+        if focused != self.focused {
+            self.focused = focused;
+            self.since = Some(std::time::Instant::now());
+        }
+    }
+
+    pub fn focused(&self) -> bool {
+        self.focused
+    }
+
+    fn elapsed_ms(&self) -> f32 {
+        self.since.map_or(f32::MAX, |t| t.elapsed().as_secs_f32() * 1000.0)
+    }
+
+    /// Quanto do visual de foco aparece: 0 sem foco, 1 com foco, suave no meio.
+    pub fn amount(&self) -> f32 {
+        let t = (self.elapsed_ms() / Self::FADE_MS).clamp(0.0, 1.0);
+        let eased = t * t * (3.0 - 2.0 * t);
+        if self.focused { eased } else { 1.0 - eased }
+    }
+
+    /// Ainda na transição (o quadro precisa ser refeito).
+    pub fn animating(&self) -> bool {
+        self.elapsed_ms() < Self::FADE_MS
+    }
+
+    /// O cursor aparece agora: só com foco; aceso direto ao ganhar o foco, depois pisca.
+    pub fn caret_visible(&self) -> bool {
+        self.focused && (self.elapsed_ms() < Self::SOLID_MS || caret_on())
+    }
 }
 
 /// Cursor de texto aceso: pisca a cada meio segundo, como nos campos do sistema.
