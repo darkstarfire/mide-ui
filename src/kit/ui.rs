@@ -3388,6 +3388,8 @@ impl<'a> Ui<'a> {
     /// cursor, recortado dentro do campo.
     fn edit_text(&mut self, value: &str, rect: (f32, f32, f32, f32), inner: (f32, f32), ty: f32) {
         let t = self.ctx.theme.clone();
+        // Com foco, o cursor pisca: o quadro é refeito a cada meio segundo.
+        self.ctx.ticking = true;
         let edit = self.ctx.memory.edit;
         let cursor_x = self.measure(&value[..edit.cursor], t.font, FontWeight::Regular);
         let total = self.measure(value, t.font, FontWeight::Regular);
@@ -3413,7 +3415,7 @@ impl<'a> Ui<'a> {
             fill_rounded(&mut clip, x0 + xa - 1.0, 6.0, xb - xa + 2.0, rect.3 - 12.0, 3.0, color([r_, g, b_, 70]));
         }
         self.ctx.text.draw(&mut clip, value, x0, ty - rect.1, t.font, FontWeight::Regular, t.text);
-        if edit.selection().is_none() {
+        if edit.selection().is_none() && caret_on() {
             fill_rounded(&mut clip, x0 + cursor_x, 7.0, 1.5, rect.3 - 14.0, 0.5, color(t.text));
         }
         self.canvas.draw_pixmap(crate::ui::draw::px((inner.0 - 2.0).floor()), crate::ui::draw::px(rect.1.floor()), clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
@@ -3563,7 +3565,10 @@ impl<'a> Ui<'a> {
             let shown = self.fit(placeholder, font, FontWeight::Regular, room);
             self.draw_text(&shown, tx, ty, font, FontWeight::Regular, [255, 255, 255, 165]);
             if look.focused && !look.busy {
-                fill_rounded(self.canvas, tx - 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
+                self.ctx.ticking = true;
+                if caret_on() {
+                    fill_rounded(self.canvas, tx - 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
+                }
             }
         } else {
             let (shown, size) = if look.secret {
@@ -3583,7 +3588,10 @@ impl<'a> Ui<'a> {
             let tw = self.measure(&shown, size, FontWeight::Regular);
             self.draw_text(&shown, tx, y + (h - size * 1.25) / 2.0 - if look.secret { 1.5 } else { 0.0 }, size, FontWeight::Regular, [255, 255, 255, 255]);
             if look.focused && !look.busy {
-                fill_rounded(self.canvas, tx + tw + 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
+                self.ctx.ticking = true;
+                if caret_on() {
+                    fill_rounded(self.canvas, tx + tw + 2.0, y + 9.0, 1.5, h - 18.0, 0.5, color([255, 255, 255, 235]));
+                }
             }
         }
         r
@@ -6122,4 +6130,9 @@ pub struct LockField {
     pub busy: bool,
     /// Mostra o botão → quando há algo digitado.
     pub submit: bool,
+}
+
+/// Cursor de texto aceso: pisca a cada meio segundo, como nos campos do sistema.
+fn caret_on() -> bool {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(true, |d| (d.as_millis() / 500) % 2 == 0)
 }
