@@ -17,7 +17,7 @@ use smithay_client_toolkit::{
         calloop::{
             ping::{make_ping, Ping},
             timer::{TimeoutAction, Timer},
-            EventLoop, LoopHandle, PostAction,
+            EventLoop, LoopHandle, PostAction, RegistrationToken,
         },
         calloop_wayland_source::WaylandSource,
         client::{
@@ -306,6 +306,8 @@ impl Waker {
 
 /// Abre a janela e roda o app até ela ser fechada.
 const TICK: std::time::Duration = std::time::Duration::from_millis(40);
+/// Parado, o app confere o vidro e o tema (e acorda) uma vez por este tempo.
+const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>> {
     let conn = Connection::connect_to_env()?;
@@ -432,7 +434,9 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         shell,
         glass: Default::default(),
         glass_on: None,
-        glass_checks: 0,
+        checked_at: std::time::Instant::now(),
+        tick_token: None,
+        tick_at: std::time::Instant::now(),
         app_id: window.app_id.clone(),
         last_frame: None,
         pointer: None,
@@ -463,7 +467,6 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         scale: 1.0,
         viewport,
         _fractional: fractional,
-        theme_checks: 0,
         title: window.title.clone(),
         app: Box::new(app),
         menus: None,
@@ -515,66 +518,9 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     runner.ctx.waker = Some(Waker(ping));
     // Quadros pedidos pelo app (`Ui::request_tick`), por exemplo enquanto miniaturas
     // carregam em segundo plano.
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(TICK), |_, _, runner: &mut Runner| {
-            if runner.ctx.ticking {
-                runner.dirty = true;
-            }
-            // Janela com vidro: a opção mudou nas Configurações? Redesenha (opaca ou
-            // translúcida). Uma consulta por segundo (o arquivo só é lido se mudou).
-            runner.glass_checks = (runner.glass_checks + 1) % 25;
-            if let Some(on) = runner.glass_on
-                && runner.glass_checks == 0
-                && crate::control_client::panel_glass() != on
-            {
-                runner.dirty = true;
-            }
-            // Claro/escuro trocado nas Configurações: o app muda na hora.
-            if runner.follow_theme {
-                runner.theme_checks = (runner.theme_checks + 1) % 25;
-                // Claro/escuro ou cor de destaque trocados: o app muda na hora.
-                let fresh = if runner.theme_checks == 0 { Some(Theme::system()) } else { None };
-                if let Some(theme) = fresh.filter(|t| t.dark != runner.ctx.theme.dark || t.accent != runner.ctx.theme.accent) {
-                    runner.ctx.theme = theme;
-                    runner.last_frame = None;
-                    runner.dirty = true;
-                }
-            }
-            if runner.ctx.wake_at.is_some_and(|at| std::time::Instant::now() >= at) {
-                runner.ctx.wake_at = None;
-                runner.dirty = true;
-            }
-            // Janelas filhas: o mesmo para cada uma (animação, vidro, quadro agendado e
-            // o tema, que é o da principal).
-            let theme_now = runner.ctx.theme.clone();
-            let now = std::time::Instant::now();
-            let mut child_ticking = false;
-            for child in &mut runner.children {
-                child_ticking |= child.ctx.ticking;
-                if child.ctx.ticking {
-                    child.dirty = true;
-                }
-                if child.ctx.wake_at.is_some_and(|at| now >= at) {
-                    child.ctx.wake_at = None;
-                    child.dirty = true;
-                }
-                if let Some(on) = child.glass_on
-                    && runner.glass_checks == 0
-                    && crate::control_client::panel_glass() != on
-                {
-                    child.dirty = true;
-                }
-                if child.ctx.theme.dark != theme_now.dark || child.ctx.theme.accent != theme_now.accent {
-                    child.ctx.theme = theme_now.clone();
-                    child.last_frame = None;
-                    child.dirty = true;
-                }
-            }
-            // Animando (menu entrando, transições): no ritmo da tela; senão, mais devagar.
-            TimeoutAction::ToDuration(if runner.ctx.ticking || child_ticking { std::time::Duration::from_millis(16) } else { TICK })
-        })
-        .map_err(|e| e.to_string())?;
+    let tick_handle = event_loop.handle();
+    runner.tick_token = tick_handle.insert_source(Timer::from_duration(TICK), |_, _, runner: &mut Runner| on_tick(runner)).ok();
+    runner.tick_at = std::time::Instant::now() + TICK;
     while !runner.exit {
         event_loop.dispatch(None, &mut runner)?;
         if runner.dirty && runner.configured {
@@ -590,10 +536,98 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         runner.window_request();
         runner.manage_children();
         runner.apply_cursor();
+        // O quadro pediu animação ou um quadro agendado antes de o relógio voltar (ele
+        // pode estar dormindo até 1 s): rearma para a hora certa.
+        let delay = tick_delay(&runner);
+        let want = std::time::Instant::now() + delay;
+        if want + std::time::Duration::from_millis(2) < runner.tick_at {
+            if let Some(token) = runner.tick_token.take() {
+                tick_handle.remove(token);
+            }
+            runner.tick_token = tick_handle.insert_source(Timer::from_duration(delay), |_, _, runner: &mut Runner| on_tick(runner)).ok();
+            runner.tick_at = want;
+        }
     }
     // O desbloqueio (e o resto) precisa chegar ao compositor antes de sair.
     let _ = conn.flush();
     Ok(())
+}
+
+/// Relógio do app: marca para redesenhar o que pediu (animação, quadro agendado, vidro e
+/// tema trocados) e volta na hora do próximo pedido. Parado, uma vez por segundo, não
+/// 25 vezes: cada despertar tira o processador do repouso e gasta bateria.
+fn on_tick(runner: &mut Runner) -> TimeoutAction {
+    if runner.ctx.ticking {
+        runner.dirty = true;
+    }
+    // Janela com vidro: a opção mudou nas Configurações? Redesenha (opaca ou
+    // translúcida). Uma consulta por segundo (o arquivo só é lido se mudou).
+    let check = runner.checked_at.elapsed() >= CHECK_EVERY;
+    if check {
+        runner.checked_at = std::time::Instant::now();
+    }
+    if let Some(on) = runner.glass_on
+        && check
+        && crate::control_client::panel_glass() != on
+    {
+        runner.dirty = true;
+    }
+    // Claro/escuro trocado nas Configurações: o app muda na hora.
+    if runner.follow_theme {
+        // Claro/escuro ou cor de destaque trocados: o app muda na hora.
+        let fresh = if check { Some(Theme::system()) } else { None };
+        if let Some(theme) = fresh.filter(|t| t.dark != runner.ctx.theme.dark || t.accent != runner.ctx.theme.accent) {
+            runner.ctx.theme = theme;
+            runner.last_frame = None;
+            runner.dirty = true;
+        }
+    }
+    if runner.ctx.wake_at.is_some_and(|at| std::time::Instant::now() >= at) {
+        runner.ctx.wake_at = None;
+        runner.dirty = true;
+    }
+    // Janelas filhas: o mesmo para cada uma (animação, vidro, quadro agendado e
+    // o tema, que é o da principal).
+    let theme_now = runner.ctx.theme.clone();
+    let now = std::time::Instant::now();
+    for child in &mut runner.children {
+        if child.ctx.ticking {
+            child.dirty = true;
+        }
+        if child.ctx.wake_at.is_some_and(|at| now >= at) {
+            child.ctx.wake_at = None;
+            child.dirty = true;
+        }
+        if let Some(on) = child.glass_on
+            && check
+            && crate::control_client::panel_glass() != on
+        {
+            child.dirty = true;
+        }
+        if child.ctx.theme.dark != theme_now.dark || child.ctx.theme.accent != theme_now.accent {
+            child.ctx.theme = theme_now.clone();
+            child.last_frame = None;
+            child.dirty = true;
+        }
+    }
+    let delay = tick_delay(runner);
+    runner.tick_at = std::time::Instant::now() + delay;
+    TimeoutAction::ToDuration(delay)
+}
+
+/// Quanto esperar até o próximo despertar: 16 ms animando; senão até o quadro agendado
+/// mais próximo (`wake_at`, como o piscar do cursor), no máximo `CHECK_EVERY`.
+fn tick_delay(runner: &Runner) -> std::time::Duration {
+    if runner.ctx.ticking || runner.children.iter().any(|c| c.ctx.ticking) {
+        return std::time::Duration::from_millis(16);
+    }
+    let now = std::time::Instant::now();
+    let wake = runner.ctx.wake_at.into_iter().chain(runner.children.iter().filter_map(|c| c.ctx.wake_at)).min();
+    let mut delay = CHECK_EVERY.saturating_sub(runner.checked_at.elapsed());
+    if let Some(at) = wake {
+        delay = delay.min(at.saturating_duration_since(now));
+    }
+    delay.max(std::time::Duration::from_millis(4))
 }
 
 /// A superfície do app: janela comum, camada (com o nome dela) ou tela de bloqueio
@@ -653,7 +687,11 @@ struct Runner {
     glass: crate::control_client::Glass,
     /// Estado do vidro no último quadro, se a janela usa vidro (`None` se não usa).
     glass_on: Option<bool>,
-    glass_checks: u32,
+    /// Última conferência do vidro e do tema (uma por segundo).
+    checked_at: std::time::Instant,
+    /// O relógio do app e quando ele volta (rearmado quando um quadro pede antes).
+    tick_token: Option<RegistrationToken>,
+    tick_at: std::time::Instant,
     /// Segue o tema do sistema (verificado uma vez por segundo).
     follow_theme: bool,
     /// Desenha na escala da tela (`Window::native_scale`), a escala atual (pixels por
@@ -662,7 +700,6 @@ struct Runner {
     scale: f32,
     viewport: Option<WpViewport>,
     _fractional: Option<WpFractionalScaleV1>,
-    theme_checks: u32,
     app_id: String,
     /// Último quadro enviado (para não reenviar um igual).
     last_frame: Option<Pixmap>,

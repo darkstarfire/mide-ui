@@ -1798,6 +1798,16 @@ impl<'a> Ui<'a> {
         self.ctx.wake_at = Some(self.ctx.wake_at.map_or(at, |w| w.min(at)));
     }
 
+    /// Mantém o quadro andando para o `FocusAnim`: a cada 16 ms durante a transição de
+    /// foco e, depois, só nas trocas do cursor (aceso/apagado).
+    pub fn keep_focus_anim(&mut self, anim: &FocusAnim) {
+        if anim.animating() {
+            self.ctx.ticking = true;
+        } else if let Some(wait) = anim.next_change() {
+            self.wake_after(wait);
+        }
+    }
+
     /// O próximo campo de texto desenhado já começa com o foco (para digitar).
     pub fn focus_next_input(&mut self) {
         self.ctx.memory.focus_next = true;
@@ -3281,9 +3291,7 @@ impl<'a> Ui<'a> {
             anim.set(focused);
             *anim
         };
-        if focused || anim.animating() {
-            self.ctx.ticking = true;
-        }
+        self.keep_focus_anim(&anim);
         let amount = anim.amount();
         if focused {
             self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
@@ -3415,8 +3423,9 @@ impl<'a> Ui<'a> {
     /// cursor, recortado dentro do campo.
     fn edit_text(&mut self, value: &str, rect: (f32, f32, f32, f32), inner: (f32, f32), ty: f32) {
         let t = self.ctx.theme.clone();
-        // Com foco, o cursor pisca: o quadro é refeito a cada meio segundo.
-        self.ctx.ticking = true;
+        // Com foco, o cursor pisca: o quadro é refeito na próxima troca do piscar (não a
+        // cada 16 ms: um campo em foco redesenhava o app sem parar, até na tela de bloqueio).
+        self.wake_after(caret_wait());
         let edit = self.ctx.memory.edit;
         let cursor_x = self.measure(&value[..edit.cursor], t.font, FontWeight::Regular);
         let total = self.measure(value, t.font, FontWeight::Regular);
@@ -3560,9 +3569,7 @@ impl<'a> Ui<'a> {
             anim.set(focused);
             *anim
         };
-        if focused || anim.animating() {
-            self.ctx.ticking = true;
-        }
+        self.keep_focus_anim(&anim);
         let amount = anim.amount();
         let caret = anim.caret_visible();
         let mut r = if focused && !look.busy {
@@ -6262,6 +6269,25 @@ impl FocusAnim {
     pub fn caret_visible(&self) -> bool {
         self.focused && (self.elapsed_ms() < Self::SOLID_MS || caret_on())
     }
+
+    /// Quanto falta para o desenho mudar (fim do cursor aceso direto ou a próxima troca do
+    /// piscar), para pedir um quadro só nessa hora; `None` sem foco e fora da transição.
+    pub fn next_change(&self) -> Option<std::time::Duration> {
+        if !self.focused {
+            return None;
+        }
+        let elapsed = self.elapsed_ms();
+        if elapsed < Self::SOLID_MS {
+            return Some(std::time::Duration::from_secs_f32((Self::SOLID_MS - elapsed) / 1000.0));
+        }
+        Some(caret_wait())
+    }
+}
+
+/// Até a próxima troca do cursor que pisca (aceso/apagado a cada meio segundo).
+fn caret_wait() -> std::time::Duration {
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    std::time::Duration::from_millis((500 - (ms % 500) as u64).max(1) + 1)
 }
 
 /// Cursor de texto aceso: pisca a cada meio segundo, como nos campos do sistema.
