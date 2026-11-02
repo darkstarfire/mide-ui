@@ -90,11 +90,16 @@ pub struct TextAreaLook<'a> {
     pub current_line: bool,
     /// O que a tecla Tab insere (recuo do editor: espaços ou `\t`).
     pub indent: &'a str,
+    /// Textos no meio da linha que não fazem parte do documento (as dicas em linha do
+    /// LSP: tipos, nomes de parâmetro): (índice de byte, texto). O texto vem antes do
+    /// caractere do índice, numa cápsula cinza, e empurra o resto da linha; cursor,
+    /// seleção e clique pulam por cima.
+    pub inlays: &'a [(usize, String)],
 }
 
 impl Default for TextAreaLook<'_> {
     fn default() -> Self {
-        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None, current_line: true, indent: "    " }
+        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None, current_line: true, indent: "    ", inlays: &[] }
     }
 }
 
@@ -1882,6 +1887,38 @@ impl<'a> Ui<'a> {
         let w = self.measure(&shown, size, FontWeight::Semibold);
         let rect = self.alloc(Some(w), 28.0);
         self.draw_text(&shown, rect.0, rect.1 + (28.0 - size * 1.25) / 2.0, size, FontWeight::Semibold, t.text);
+    }
+
+    /// Texto de largura fixa em pedaços; os marcados com `true` saem em destaque (na
+    /// cor de destaque, sublinhados). Quebra por caractere quando não cabe
+    /// na largura (assinaturas longas de funções).
+    pub fn code_spans(&mut self, spans: &[(&str, bool)], size: f32) {
+        let t = self.ctx.theme.clone();
+        let room = self.width.max(40.0);
+        let cw = self.ctx.text.measure_mono("M", size).max(1.0);
+        let per_line = ((room / cw).floor() as usize).max(8);
+        // Cada caractere com a cor dele, depois cortado em linhas.
+        let chars: Vec<(char, bool)> = spans.iter().flat_map(|(s, on)| s.chars().map(move |c| (c, *on))).collect();
+        let lines: Vec<&[(char, bool)]> = chars.chunks(per_line).collect();
+        let line_h = (size * 1.45).round();
+        let rect = self.alloc(None, line_h * lines.len().max(1) as f32);
+        for (i, line) in lines.iter().enumerate() {
+            let y = rect.1 + i as f32 * line_h + (line_h - size * 1.25) / 2.0;
+            let mut k = 0;
+            while k < line.len() {
+                let on = line[k].1;
+                let run: String = line[k..].iter().take_while(|c| c.1 == on).map(|c| c.0).collect();
+                let n = run.chars().count();
+                let c = if on { t.accent } else { t.text };
+                let x = rect.0 + k as f32 * cw;
+                self.ctx.text.draw_mono(self.canvas, &run, x, y, size, c);
+                if on {
+                    // Sublinhado fino embaixo do parâmetro atual.
+                    fill_rounded(self.canvas, x, y + size * 1.2, n as f32 * cw, 1.0, 0.0, color(t.accent));
+                }
+                k += n;
+            }
+        }
     }
 
     /// Tamanho da janela inteira (diálogos se ajustam a ele).
@@ -3751,15 +3788,41 @@ impl<'a> Ui<'a> {
         let text_x = rect.0 + gutter + 8.0;
         let view = (rect.2 - gutter - 16.0, rect.3 - 2.0 * pad);
         let rows = (view.1 / line_h).floor().max(1.0) as usize;
-        // Largura do começo de uma linha até um ponto, na fonte da área.
-        let width = |ui: &mut Self, s: &str| if sans { ui.ctx.text.measure(s, size, FontWeight::Regular) } else { ui.ctx.text.measure_mono(s, size) };
+        // Largura de um texto na fonte da área (sem as dicas em linha).
+        let plain_width = |ui: &mut Self, s: &str| if sans { ui.ctx.text.measure(s, size, FontWeight::Regular) } else { ui.ctx.text.measure_mono(s, size) };
+        // Dicas em linha válidas (no limite de um caractere), em ordem, com a largura
+        // de cada uma (texto menor e a cápsula).
+        let inlay_size = (size * 0.85).round();
+        let mut inlays: Vec<(usize, f32, &str)> = look
+            .inlays
+            .iter()
+            .filter(|(at, _)| *at <= doc.text.len() && doc.text.is_char_boundary(*at))
+            .map(|(at, label)| (*at, if sans { self.ctx.text.measure(label, inlay_size, FontWeight::Regular) } else { self.ctx.text.measure_mono(label, inlay_size) } + 10.0, label.as_str()))
+            .collect();
+        inlays.sort_by_key(|i| i.0);
+        // Quanto as dicas de `from..to` empurram (as que estão no próprio `to` só com
+        // `incl`: o texto começa depois delas, o cursor fica antes).
+        let shift = |from: usize, to: usize, incl: bool| -> f32 { inlays.iter().filter(|(at, _, _)| *at >= from && (*at < to || (incl && *at == to))).map(|i| i.1).sum() };
+        // Largura do começo de uma linha até um ponto, na fonte da área (com as dicas
+        // em linha de antes do ponto). `s` é sempre um começo da linha que começa em
+        // `start`, no texto do documento.
+        let width_from = |ui: &mut Self, text: &str, start: usize, s: &str| -> f32 {
+            let w = plain_width(ui, s);
+            if inlays.is_empty() || s.is_empty() {
+                return w;
+            }
+            debug_assert!(text.len() >= start);
+            w + shift(start, start + s.len(), false)
+        };
         // Linha e posição sob o ponteiro.
         let pointer_at = |ui: &mut Self, doc: &super::textarea::TextDoc, starts: &[usize]| -> Option<usize> {
             let (px, py) = ui.pointer()?;
             let line = (((py - rect.1 - pad + doc.scroll) / line_h).floor().max(0.0) as usize).min(starts.len() - 1);
             let x = px - text_x + doc.scroll_x;
-            Some(index_in_line(&doc.text, starts, line, x, |s| width(ui, s)))
+            let start = starts[line];
+            Some(index_in_line(&doc.text, starts, line, x, |s| width_from(ui, &doc.text, start, s)))
         };
+        let width = |ui: &mut Self, s: &str| plain_width(ui, s);
         if std::mem::take(&mut self.ctx.memory.focus_next) {
             self.ctx.memory.focus = Some(id);
         }
@@ -3817,10 +3880,10 @@ impl<'a> Ui<'a> {
                 starts = doc.line_starts();
                 let line = line_of(&starts, doc.edit.cursor);
                 // Coluna em pixels do cursor (para subir e descer mantendo a coluna).
-                let col_x = |ui: &mut Self, doc: &super::textarea::TextDoc| doc.goal_x.unwrap_or_else(|| width(ui, &doc.text[starts[line]..doc.edit.cursor]));
+                let col_x = |ui: &mut Self, doc: &super::textarea::TextDoc| doc.goal_x.unwrap_or_else(|| width_from(ui, &doc.text, starts[line], &doc.text[starts[line]..doc.edit.cursor]));
                 let vertical = |ui: &mut Self, doc: &mut super::textarea::TextDoc, to: usize| {
                     let x = col_x(ui, doc);
-                    let at = index_in_line(&doc.text, &starts, to, x, |s| width(ui, s));
+                    let at = index_in_line(&doc.text, &starts, to, x, |s| width_from(ui, &doc.text, starts[to], s));
                     doc.edit.move_to(at, shift);
                     doc.goal_x = Some(x);
                 };
@@ -3906,7 +3969,7 @@ impl<'a> Ui<'a> {
         let clicking = r.secondary_clicked || (r.hovered && (self.ctx.input.pressed || self.ctx.input.released));
         let pointer_index = if clicking { pointer_at(self, doc, &starts) } else { None };
         let cursor_line = line_of(&starts, doc.edit.cursor);
-        let cursor_x = width(self, &doc.text[starts[cursor_line]..doc.edit.cursor]);
+        let cursor_x = width(self, &doc.text[starts[cursor_line]..doc.edit.cursor]) + shift(starts[cursor_line], doc.edit.cursor, false);
         // As decorações já com a tecla deste quadro, antes da rolagem: o texto do fim da
         // linha do cursor também precisa ficar à vista.
         let deco = look.decorate.as_mut().map(|f| f(doc)).unwrap_or_default();
@@ -3981,8 +4044,8 @@ impl<'a> Ui<'a> {
             }
             if let Some((a, b)) = selection.filter(|(a, b)| *a <= end && *b >= start && !(a == b)) {
                 let (sa, sb) = (a.max(start), b.min(end));
-                let xa = width(self, &doc.text[start..sa]);
-                let xb = width(self, &doc.text[start..sb]);
+                let xa = width(self, &doc.text[start..sa]) + shift(start, sa, true);
+                let xb = width(self, &doc.text[start..sb]) + shift(start, sb, false);
                 // A quebra de linha selecionada aparece como um pouco a mais no fim (menos
                 // numa linha com texto depois do fim: a marca ficaria embaixo dele).
                 let extra = if b > end && !trailing { size * 0.5 } else { 0.0 };
@@ -3994,21 +4057,40 @@ impl<'a> Ui<'a> {
             for (a, b, c) in color_runs(&doc.text, start, end, &deco.colors) {
                 let rgba = c.unwrap_or(t.text);
                 for (p, q) in tab_pieces(&doc.text, start, a, b) {
-                    let x = x0 + if p == start { 0.0 } else { width(self, &doc.text[start..p]) };
-                    draw(self, &mut clip, &doc.text[p..q], x, y + text_y, rgba);
+                    // Cortado também nas dicas em linha (o texto depois delas anda).
+                    let mut cuts: Vec<usize> = inlays.iter().map(|i| i.0).filter(|at| *at > p && *at < q).collect();
+                    cuts.dedup();
+                    let mut from = p;
+                    for to in cuts.into_iter().chain(std::iter::once(q)) {
+                        let x = x0 + if from == start { 0.0 } else { width(self, &doc.text[start..from]) } + shift(start, from, true);
+                        draw(self, &mut clip, &doc.text[from..to], x, y + text_y, rgba);
+                        from = to;
+                    }
+                }
+            }
+            // As dicas em linha: texto menor e cinza numa cápsula, antes do caractere.
+            for (at, iw, label) in inlays.iter().filter(|(at, _, _)| *at >= start && *at <= end) {
+                let x = x0 + width(self, &doc.text[start..*at]) + shift(start, *at, false) + 2.0;
+                let [r0, g0, b0, _] = t.text_secondary;
+                fill_rounded(&mut clip, x, y + 2.0, iw - 4.0, line_h - 4.0, 4.0, color([r0, g0, b0, 30]));
+                let ly = y + (line_h - inlay_size * 1.25) / 2.0;
+                if sans {
+                    self.ctx.text.draw(&mut clip, label, x + 3.0, ly, inlay_size, FontWeight::Regular, t.text_secondary);
+                } else {
+                    self.ctx.text.draw_mono(&mut clip, label, x + 3.0, ly, inlay_size, t.text_secondary);
                 }
             }
             // Sublinhado pontilhado (erros), logo abaixo das letras.
             for (a, b) in underline_runs(&doc.text, start, end, &deco.underlines) {
-                let xa = x0 + width(self, &doc.text[start..a]);
-                let xb = x0 + width(self, &doc.text[start..b]);
+                let xa = x0 + width(self, &doc.text[start..a]) + shift(start, a, true);
+                let xb = x0 + width(self, &doc.text[start..b]) + shift(start, b, false);
                 dotted_line(&mut clip, xa, xb, y + text_y + size * 1.2, t.danger);
             }
             // O texto do fim da linha (vários vêm um depois do outro, com 4 pt antes de
             // cada um); o fim da linha só é medido quando ela tem algum. O que não cabe
             // até a borda termina com "…": um número cortado não pode parecer inteiro.
             if trailing {
-                let mut x = x0 + width(self, &doc.text[start..end]) + 4.0;
+                let mut x = x0 + width(self, &doc.text[start..end]) + shift(start, end, true) + 4.0;
                 for (_, extra, rgba) in deco.trailing.iter().filter(|(l, _, _)| *l == line) {
                     let room = w as f32 - 4.0 - x;
                     let shown = if width(self, extra) <= room { extra.clone() } else { self.fit_face(extra, size, sans, room) };
