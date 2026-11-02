@@ -380,8 +380,9 @@ impl FileChooser {
                 });
             };
             let mut main = |ui: &mut Ui, action: &mut Option<Action>| {
-                // Barra: voltar/avançar, o nome da pasta, subir e a busca.
-                ui.row(|ui| {
+                // Barra: voltar/avançar, o nome da pasta, subir e a busca. A mesma barra do
+                // Arquivos (altura e espaçamento do cabeçalho), não uma linha de formulário.
+                ui.toolbar(|ui| {
                     match ui.tool_group(&[Tool::new("go-previous-symbolic", "Back").enabled(has_back), Tool::new("go-next-symbolic", "Forward").enabled(has_forward)]) {
                         Some(0) => *action = Some(Action::Back),
                         Some(1) => *action = Some(Action::Forward),
@@ -394,8 +395,8 @@ impl FileChooser {
                     let name = dir.file_name().map_or_else(|| tr("Computer").into_owned(), |n| n.to_string_lossy().into_owned());
                     let name = if dir == crate::places::home_dir() { tr("Home").into_owned() } else { name };
                     ui.toolbar_title(&name, 220.0);
-                    ui.push_right(190.0);
-                    ui.sized(190.0, |ui| {
+                    ui.push_right(200.0);
+                    ui.sized(200.0, |ui| {
                         ui.search_field(query, &tr("Search"));
                     });
                 });
