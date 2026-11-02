@@ -3144,6 +3144,12 @@ impl<'a> Ui<'a> {
     /// Barra de abas do Tahoe: abas de largura igual numa faixa em cápsula, a escolhida
     /// em destaque, × ao passar o ponteiro e + no fim para abrir outra.
     pub fn tab_bar(&mut self, titles: &[String], selected: usize) -> TabAction {
+        self.tab_bar_icons(titles, &[], selected)
+    }
+
+    /// Como `tab_bar`, com um ícone antes de cada título (nome do tema ou caminho de
+    /// um arquivo; vazio: sem ícone), como as abas dos editores de código.
+    pub fn tab_bar_icons(&mut self, titles: &[String], icons: &[String], selected: usize) -> TabAction {
         let t = self.ctx.theme.clone();
         let rect = self.alloc(None, 32.0);
         let mut action = TabAction::None;
@@ -3187,11 +3193,19 @@ impl<'a> Ui<'a> {
             if r.clicked && i != selected {
                 action = TabAction::Select(i);
             }
-            let room = tab.2 - 48.0;
+            let icon = icons.get(i).filter(|n| !n.is_empty());
+            let iw = if icon.is_some() { 18.0 } else { 0.0 };
+            let room = tab.2 - 48.0 - iw;
             let shown = self.fit(title, t.font_small, FontWeight::Regular, room.max(20.0));
             let sw = self.measure(&shown, t.font_small, FontWeight::Regular);
             let tc = if i == selected { [24, 24, 28, 255] } else { t.text_secondary };
-            self.draw_text(&shown, tab.0 + (tab.2 - sw) / 2.0, tab.1 + (tab.3 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, tc);
+            let x = tab.0 + (tab.2 - sw - iw) / 2.0;
+            if let Some(name) = icon
+                && let Some(pix) = self.ctx.icon(&[name.as_str()], 14, false)
+            {
+                crate::ui::draw::blit(self.canvas, &pix, x as i32, (tab.1 + (tab.3 - 14.0) / 2.0) as i32, 1.0);
+            }
+            self.draw_text(&shown, x + iw, tab.1 + (tab.3 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, tc);
         }
         // + no fim.
         let id = self.ctx.id();
@@ -4098,6 +4112,28 @@ impl<'a> Ui<'a> {
                         break;
                     }
                     x += draw(self, &mut clip, &shown, x, y + text_y, *rgba) + 4.0;
+                }
+            }
+            // Marcas da margem (Git): faixa na borda direita da margem, na tela inteira
+            // (fora do recorte do texto).
+            for (_, c, deleted) in deco.gutter.iter().filter(|(l, _, _)| *l == line) {
+                let gx = rect.0 + gutter - 4.0;
+                let gy = rect.1 + y;
+                if gy + line_h > rect.1 && gy < rect.1 + rect.3 {
+                    if *deleted {
+                        let mut pb = PathBuilder::new();
+                        pb.move_to(gx - 2.0, gy - 4.0);
+                        pb.line_to(gx + 3.0, gy);
+                        pb.line_to(gx - 2.0, gy + 4.0);
+                        pb.close();
+                        if let Some(path) = pb.finish() {
+                            let mut paint = Paint { anti_alias: true, ..Default::default() };
+                            paint.set_color(color(*c));
+                            self.canvas.fill_path(&path, &paint, tiny_skia::FillRule::Winding, crate::ui::draw::tf(), None);
+                        }
+                    } else {
+                        fill_rounded(self.canvas, gx, gy + 1.0, 3.0, line_h - 2.0, 1.5, color(*c));
+                    }
                 }
             }
             if look.line_numbers {
