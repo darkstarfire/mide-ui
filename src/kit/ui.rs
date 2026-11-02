@@ -95,11 +95,23 @@ pub struct TextAreaLook<'a> {
     /// caractere do índice, numa cápsula cinza, e empurra o resto da linha; cursor,
     /// seleção e clique pulam por cima.
     pub inlays: &'a [(usize, String)],
+    /// Cores próprias (temas de cores de editores); `None`, as do tema do mide.
+    pub colors: Option<TextAreaColors>,
+}
+
+/// Cores de uma área de texto com tema próprio (cada uma opcional).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TextAreaColors {
+    pub background: Option<Rgba>,
+    pub text: Option<Rgba>,
+    pub gutter: Option<Rgba>,
+    pub line_number: Option<Rgba>,
+    pub current_line: Option<Rgba>,
 }
 
 impl Default for TextAreaLook<'_> {
     fn default() -> Self {
-        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None, current_line: true, indent: "    ", inlays: &[] }
+        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None, current_line: true, indent: "    ", inlays: &[], colors: None }
     }
 }
 
@@ -4021,9 +4033,12 @@ impl<'a> Ui<'a> {
         doc.scroll = doc.scroll.clamp(0.0, (content_h - view.1).max(0.0));
 
         // Desenho: fundo, margem com os números e só as linhas à vista.
-        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
+        let pal = look.colors.unwrap_or_default();
+        let bg = pal.background.unwrap_or(t.card);
+        let text_color = pal.text.unwrap_or(t.text);
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(bg));
         if look.line_numbers {
-            fill_rounded(self.canvas, rect.0, rect.1, gutter, rect.3, t.control_radius, color(t.shade(10)));
+            fill_rounded(self.canvas, rect.0, rect.1, gutter, rect.3, t.control_radius, color(pal.gutter.unwrap_or(t.shade(10))));
         }
         let first = (doc.scroll / line_h).floor() as usize;
         let last = (first + rows + 2).min(starts.len());
@@ -4054,7 +4069,7 @@ impl<'a> Ui<'a> {
             let x0 = -doc.scroll_x;
             let trailing = has_trailing(line);
             if look.current_line && focused && line == cursor_line && selection.is_none() {
-                fill_rounded(&mut clip, 0.0, y, w as f32, line_h, 0.0, color([ar, ag, ab, 14]));
+                fill_rounded(&mut clip, 0.0, y, w as f32, line_h, 0.0, color(pal.current_line.unwrap_or([ar, ag, ab, 14])));
             }
             if let Some((a, b)) = selection.filter(|(a, b)| *a <= end && *b >= start && !(a == b)) {
                 let (sa, sb) = (a.max(start), b.min(end));
@@ -4069,7 +4084,7 @@ impl<'a> Ui<'a> {
             // (sem somar pedaço a pedaço, que acumularia erro). Um pedaço do meio da linha
             // com tabulação é cortado nela (`tab_pieces`).
             for (a, b, c) in color_runs(&doc.text, start, end, &deco.colors) {
-                let rgba = c.unwrap_or(t.text);
+                let rgba = c.unwrap_or(text_color);
                 for (p, q) in tab_pieces(&doc.text, start, a, b) {
                     // Cortado também nas dicas em linha (o texto depois delas anda).
                     let mut cuts: Vec<usize> = inlays.iter().map(|i| i.0).filter(|at| *at > p && *at < q).collect();
@@ -4141,14 +4156,14 @@ impl<'a> Ui<'a> {
                 let nw = self.ctx.text.measure_mono(&number, size * 0.9);
                 let ny = rect.1 + y + (line_h - size * 0.9 * 1.25) / 2.0;
                 if ny > rect.1 && ny < rect.1 + rect.3 - size {
-                    let shade = if line == cursor_line && focused { t.text } else { t.text_secondary };
+                    let shade = if line == cursor_line && focused { text_color } else { pal.line_number.unwrap_or(t.text_secondary) };
                     self.ctx.text.draw_mono(self.canvas, &number, rect.0 + gutter - 10.0 - nw, ny, size * 0.9, shade);
                 }
             }
         }
         if focused && selection.is_none() {
             let y = pad + cursor_line as f32 * line_h - doc.scroll;
-            fill_rounded(&mut clip, cursor_x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(t.text));
+            fill_rounded(&mut clip, cursor_x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(text_color));
         }
         self.canvas.draw_pixmap(crate::ui::draw::px(text_x.floor()), crate::ui::draw::px(rect.1.floor()), clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
         // Barra de rolagem por cima do texto, quando ele passa da altura.
