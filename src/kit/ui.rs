@@ -2375,7 +2375,9 @@ impl<'a> Ui<'a> {
     pub fn button_styled(&mut self, s: &str, style: ButtonStyle) -> Response {
         let t = self.ctx.theme.clone();
         let id = self.ctx.id();
-        let w = self.measure(s, t.font, FontWeight::Semibold) + 32.0;
+        // Dentro de `sized`, o botão ocupa a largura pedida (botões alinhados à direita
+        // com `push_right` encostam na borda); fora, o tamanho do texto.
+        let w = self.next_width.unwrap_or_else(|| self.button_width(s));
         let rect = self.alloc(Some(w), t.row);
         let r = self.interact(id, rect);
         let pressed = self.ctx.memory.active == Some(id) && r.hovered;
@@ -2402,9 +2404,17 @@ impl<'a> Ui<'a> {
                 self.canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, crate::ui::draw::tf(), None);
             }
         }
+        let s = &self.fit(s, t.font, FontWeight::Semibold, (rect.2 - 16.0).max(0.0));
         let tw = self.measure(s, t.font, FontWeight::Semibold);
         self.draw_text(s, rect.0 + (rect.2 - tw) / 2.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Semibold, tc);
         r
+    }
+
+    /// Largura que um botão com o texto `s` ocupa (sem `sized`): para alinhar botões
+    /// à direita com `push_right` sem sobrar espaço.
+    pub fn button_width(&mut self, s: &str) -> f32 {
+        let font = self.ctx.theme.font;
+        self.measure(s, font, FontWeight::Semibold) + 32.0
     }
 
     /// Botão comum.
@@ -4925,7 +4935,9 @@ impl<'a> Ui<'a> {
         // Só a parte do cartão que aparece na tela ganha imagem. A imagem tem a largura
         // do cartão inteiro (os itens ficam recuados): o destaque das linhas vai de borda
         // a borda e os cantos são recortados na volta.
-        let top = (y0 + pad_y).max(self.visible.0);
+        // A imagem começa na borda de cima do cartão (não depois do respiro): o
+        // destaque da primeira linha chega até a borda, sem faixa sem cor.
+        let top = y0.max(self.visible.0);
         let bottom = self.visible.1;
         let mut first = true;
         let (inner, used) = self.sub_area(x, top, card_w, bottom - top, y0 + pad_y, |ui| {

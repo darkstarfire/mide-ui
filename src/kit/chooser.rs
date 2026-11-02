@@ -339,8 +339,11 @@ impl FileChooser {
         let (ctrl, shift) = (ui.input().ctrl, ui.input().shift);
         let embedded = self.embedded;
         let sidebar_w = if width < 560.0 { 0.0 } else { 172.0 };
+        // O título fica no alto da barra lateral (com ela), para a barra de ferramentas
+        // começar no topo do diálogo, sem uma faixa vazia em cima dela.
+        let title_in_sidebar = !embedded && sidebar_w > 0.0;
         let body = |ui: &mut Ui| {
-            if !embedded {
+            if !embedded && !title_in_sidebar {
                 ui.strong(&title);
             }
             // Salvar: o nome em cima, como no Mac.
@@ -364,8 +367,12 @@ impl FileChooser {
             // A barra lateral rola dentro da altura da coluna principal (barra de
             // ferramentas, cabeçalho e lista): com muitos lugares, ela não empurra os
             // botões de baixo para fora da janela.
-            let side_h = list_h + 24.0 + 36.0;
+            let title_h = if title_in_sidebar { 28.0 + ui.theme().spacing } else { 0.0 };
+            let side_h = list_h + 24.0 + 36.0 - title_h;
             let sidebar = |ui: &mut Ui, action: &mut Option<Action>| {
+                if title_in_sidebar {
+                    ui.strong(&title);
+                }
                 ui.scroll_area(side_h, |ui| {
                     ui.heading(&tr("Favorites"));
                     for (label, icon, place) in places() {
@@ -495,13 +502,17 @@ impl FileChooser {
                         }
                     });
                 }
-                ui.push_right(2.0 * 110.0 + 8.0);
-                ui.sized(110.0, |ui| {
-                    if ui.button(&tr("Cancel")).clicked() {
+                // Cancelar e o botão principal do tamanho do texto, encostados na borda
+                // direita (o último termina onde termina a lista).
+                let cancel = tr("Cancel");
+                let (wc, wa) = (ui.button_width(&cancel).max(88.0), ui.button_width(&label).max(88.0));
+                ui.push_right(wc + ui.theme().spacing + wa);
+                ui.sized(wc, |ui| {
+                    if ui.button(&cancel).clicked() {
                         action = Some(Action::Cancel);
                     }
                 });
-                ui.sized(110.0, |ui| {
+                ui.sized(wa, |ui| {
                     if ui.primary_button(&label).clicked() {
                         action = Some(Action::Confirm);
                     }
