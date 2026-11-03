@@ -174,6 +174,9 @@ pub struct Decorations {
     /// vários na mesma linha vêm na ordem da lista, com 4 pt entre eles. O que não cabe
     /// até a borda termina com "…".
     pub trailing: Vec<(usize, String, Rgba)>,
+    /// O texto do fim da linha encostado na borda direita da área (os avisos de um
+    /// editor de código), cortado com "…" se não couber; a área não rola para mostrá-lo.
+    pub trailing_right: bool,
     /// Marcas na margem dos números (linha a partir de 0, cor): uma faixa fina na
     /// borda direita da margem, como as do Git nos editores (linha nova, mudada); com
     /// `true`, um triângulo pequeno entre as linhas (linhas apagadas acima desta).

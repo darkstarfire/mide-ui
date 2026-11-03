@@ -4125,7 +4125,7 @@ impl<'a> Ui<'a> {
         // notas), esse texto também fica à vista, sem o cursor sair da área. Vale em todo
         // quadro: o texto muda sem tecla (Graus/Radianos, casas decimais).
         let clip_w = view.0 + 8.0;
-        if doc.edit.cursor == line_end(&doc.text, &starts, cursor_line) && has_trailing(cursor_line) {
+        if !deco.trailing_right && doc.edit.cursor == line_end(&doc.text, &starts, cursor_line) && has_trailing(cursor_line) {
             let mut right = cursor_x;
             for (_, extra, _) in deco.trailing.iter().filter(|(l, _, _)| *l == cursor_line) {
                 right += 4.0 + width(self, extra);
@@ -4222,7 +4222,23 @@ impl<'a> Ui<'a> {
             // O texto do fim da linha (vários vêm um depois do outro, com 4 pt antes de
             // cada um); o fim da linha só é medido quando ela tem algum. O que não cabe
             // até a borda termina com "…": um número cortado não pode parecer inteiro.
-            if trailing {
+            if trailing && deco.trailing_right {
+                // Encostado à direita da área, sempre à vista (não rola com o texto); se o
+                // código da linha chega lá, o aviso encolhe com "…" ou some.
+                let line_end_x = x0 + width(self, &doc.text[start..end]) + shift(start, end, true) + 24.0;
+                let texts: Vec<(&String, Rgba)> = deco.trailing.iter().filter(|(l, _, _)| *l == line).map(|(_, t, c)| (t, *c)).collect();
+                let total: f32 = texts.iter().map(|(t, _)| width(self, t) + 12.0).sum();
+                let right = w as f32 - 10.0;
+                let mut x = (right - total).max(line_end_x);
+                for (extra, rgba) in texts {
+                    let room = right - x;
+                    if room < 40.0 {
+                        break;
+                    }
+                    let shown = if width(self, extra) <= room { extra.clone() } else { self.fit_face(extra, size, sans, room) };
+                    x += draw(self, &mut clip, &shown, x, y + text_y, rgba) + 12.0;
+                }
+            } else if trailing {
                 let mut x = x0 + width(self, &doc.text[start..end]) + shift(start, end, true) + 4.0;
                 for (_, extra, rgba) in deco.trailing.iter().filter(|(l, _, _)| *l == line) {
                     let room = w as f32 - 4.0 - x;
