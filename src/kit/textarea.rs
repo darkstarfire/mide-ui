@@ -243,6 +243,27 @@ pub fn tab_pieces(text: &str, start: usize, a: usize, b: usize) -> Vec<(usize, u
 }
 
 /// Os sublinhados que caem na linha `start..end`, cortados nela (os inválidos saem).
+/// As cores que tocam o trecho `from..to`: em ordem e sem sobreposição (como as do
+/// realce), achadas por busca binária; senão, todas.
+pub fn spans_in<T>(spans: &[(Range<usize>, T)], from: usize, to: usize) -> &[(Range<usize>, T)] {
+    if !spans.windows(2).all(|w| w[0].0.end <= w[1].0.start) {
+        return spans;
+    }
+    let a = spans.partition_point(|(r, _)| r.end < from);
+    let b = spans.partition_point(|(r, _)| r.start <= to);
+    &spans[a..b.max(a)]
+}
+
+/// Como [`spans_in`], para trechos sem cor (sublinhados).
+pub fn ranges_in(ranges: &[Range<usize>], from: usize, to: usize) -> &[Range<usize>] {
+    if !ranges.windows(2).all(|w| w[0].end <= w[1].start) {
+        return ranges;
+    }
+    let a = ranges.partition_point(|r| r.end < from);
+    let b = ranges.partition_point(|r| r.start <= to);
+    &ranges[a..b.max(a)]
+}
+
 pub fn underline_runs(text: &str, start: usize, end: usize, underlines: &[Range<usize>]) -> Vec<(usize, usize)> {
     underlines.iter().filter_map(|r| clip_to_line(text, start, end, r)).collect()
 }
@@ -250,6 +271,19 @@ pub fn underline_runs(text: &str, start: usize, end: usize, underlines: &[Range<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cores_so_do_trecho_a_vista() {
+        let spans = vec![(0..3, 1), (4..5, 2), (8..9, 3), (12..20, 4)];
+        assert_eq!(spans_in(&spans, 4, 9), &spans[1..3]);
+        // A que começa antes e entra no trecho vem junto.
+        assert_eq!(spans_in(&spans, 14, 30), &spans[3..4]);
+        assert!(spans_in(&spans, 21, 30).is_empty());
+        // Fora de ordem: todas (quem desenha recorta linha a linha).
+        let messy = vec![(4..5, 2), (0..3, 1)];
+        assert_eq!(spans_in(&messy, 0, 1).len(), 2);
+        assert_eq!(ranges_in(&[0..2, 5..9], 3, 4), &[] as &[Range<usize>]);
+    }
 
     #[test]
     fn linhas_e_posicoes() {

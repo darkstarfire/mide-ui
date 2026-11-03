@@ -308,6 +308,12 @@ if r.submitted() {
   fim da área, cada um recortado no seu retângulo (as coordenadas começam no canto
   dele), com a divisória arrastável. A resposta tem `changed` enquanto arrasta e
   `submitted` quando o arrasto termina.
+- `ui.split_divider(área, &mut largura, min, max)` e
+  `ui.split_vertical_divider(área, &mut altura_de_baixo, min, max)`: só a divisória, na
+  `área` da janela; devolvem a resposta e os dois retângulos (na janela), para o app
+  desenhar cada lado onde quiser. Use quando os lados são áreas grandes desenhadas por
+  conta própria (um editor): o `split` recorta cada lado numa imagem à parte, copiada
+  na ida e na volta a cada quadro.
 - `ui.sidebar_panel(...)`: o mesmo `split` com a barra lateral de vidro do mide; numa
   janela de conteúdo inteiro, flutuante, com os botões da janela no topo (o conteúdo
   dela começa abaixo deles) e o vazio arrastando a janela.
@@ -651,8 +657,13 @@ compositor mostra o ponteiro de "copiar" sobre ela e os caminhos chegam em
 
 ## Editor de código
 
-`TextAreaLook` tem `current_line` (destacar a linha do cursor) e `indent` (o que a tecla
-Tab insere: espaços ou `\t`). `ui.set_mono_font(Some("JetBrains Mono"))` troca a fonte
+`TextAreaLook` tem `current_line` (destacar a linha do cursor), `indent` (o que a tecla
+Tab insere: espaços ou `\t`) e `single_pass_edits`: uma tecla que muda o texto aparece
+com uma passada do quadro só, sem a segunda que atualiza o que vem antes da área de
+texto (o app pede um quadro logo depois com `ui.wake_after`, como o Code). A imagem do
+texto fica guardada entre quadros e só é redesenhada quando muda o que ela mostra; as
+cores das `Decorations` que vêm em ordem e sem sobreposição (as de um realce) são
+recortadas às linhas à vista por busca binária. `ui.set_mono_font(Some("JetBrains Mono"))` troca a fonte
 de largura fixa da janela e `ui.mono_fonts()` lista as instaladas. `ui.take_key(Key::Down)`
 tira uma tecla do quadro antes dos componentes seguintes (um popup de completar usa as
 setas antes da área de texto).

@@ -97,6 +97,12 @@ pub struct TextAreaLook<'a> {
     pub inlays: &'a [(usize, String)],
     /// Cores próprias (temas de cores de editores); `None`, as do tema do mide.
     pub colors: Option<TextAreaColors>,
+    /// Uma tecla que muda o texto não pede outra passada do quadro (o padrão pede, para
+    /// o que fica antes da área de texto já ver o texto novo): a tecla aparece com uma
+    /// passada só, e o app atualiza o resto num quadro logo depois (`Ui::wake_after`).
+    /// Mover o cursor sem editar continua pedindo a outra passada. Para editores, onde
+    /// cada passada a mais pesa na digitação.
+    pub single_pass_edits: bool,
 }
 
 /// Cores de uma área de texto com tema próprio (cada uma opcional).
@@ -111,7 +117,7 @@ pub struct TextAreaColors {
 
 impl Default for TextAreaLook<'_> {
     fn default() -> Self {
-        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None, current_line: true, indent: "    ", inlays: &[], colors: None }
+        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None, current_line: true, indent: "    ", inlays: &[], colors: None, single_pass_edits: false }
     }
 }
 
@@ -740,6 +746,10 @@ pub struct Ctx {
     icon_jobs: Option<std::sync::mpsc::Sender<(String, bool, Vec<String>, u32)>>,
     icon_done: Option<std::sync::mpsc::Receiver<(String, Option<Pixmap>)>>,
     icon_pending: std::collections::HashSet<String>,
+    /// Imagem do texto de cada área de texto (pelo componente), com o resumo do que
+    /// ela mostra: igual no quadro seguinte (a segunda passada de uma tecla, o cursor
+    /// parado), é só copiada, sem desenhar as linhas de novo.
+    text_area_images: HashMap<u64, (u64, Pixmap)>,
     /// Camada por cima de tudo (menus de contexto) e o tamanho da janela.
     overlay: Option<Pixmap>,
     /// Painéis de vidro da camada de cima (retângulo na janela, em pontos, e raio): o
@@ -872,6 +882,7 @@ impl Ctx {
             icon_jobs: None,
             icon_done: None,
             icon_pending: std::collections::HashSet::new(),
+            text_area_images: HashMap::new(),
             overlay: None,
             frost: Vec::new(),
             window: (0, 0),
@@ -3913,6 +3924,8 @@ impl<'a> Ui<'a> {
         let rect = self.alloc(None, height);
         let mut r = self.interact(id, rect);
         let mut starts = doc.line_starts();
+        // O texto de quando as linhas foram contadas (refeitas depois só se ele mudar).
+        let counted = (doc.version, doc.text.len());
         let digits = starts.len().to_string().len().max(2);
         let gutter = if look.line_numbers { self.ctx.text.measure_mono(&"0".repeat(digits), size * 0.9) + 20.0 } else { 0.0 };
         let text_x = rect.0 + gutter + 8.0;
@@ -4089,11 +4102,13 @@ impl<'a> Ui<'a> {
             }
             r.changed = doc.version != before.1;
             moved |= r.changed || doc.edit != before.0;
-            if moved {
+            if moved && !(look.single_pass_edits && r.changed) {
                 self.ctx.repaint = true;
             }
         }
-        starts = doc.line_starts();
+        if (doc.version, doc.text.len()) != counted {
+            starts = doc.line_starts();
+        }
         // Posição do texto sob o ponteiro só no quadro de um clique (o menu de contexto
         // do app usa): medir a cada movimento do mouse custaria caro em linhas longas.
         let clicking = r.secondary_clicked || (r.hovered && (self.ctx.input.pressed || self.ctx.input.released));
@@ -4148,10 +4163,32 @@ impl<'a> Ui<'a> {
         let last = (first + rows + 2).min(starts.len());
         let (w, h) = (clip_w.ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
         let k = crate::ui::draw::scale();
-        let Some(mut clip) = Pixmap::new((w as f32 * k).ceil() as u32, (h as f32 * k).ceil() as u32) else {
-            return TextAreaResponse { response: r, pointer_index };
-        };
         let selection = doc.edit.selection();
+        // Só as cores e os sublinhados das linhas à vista (num arquivo grande, percorrer
+        // todos a cada linha desenhada custava milissegundos por quadro).
+        let shown = if first < last { (starts[first], line_end(&doc.text, &starts, last - 1)) } else { (0, 0) };
+        let colors = super::textarea::spans_in(&deco.colors, shown.0, shown.1);
+        let underlines = super::textarea::ranges_in(&deco.underlines, shown.0, shown.1);
+        // Resumo de tudo o que a imagem do texto mostra (o próprio texto à vista, não só
+        // a versão: um app que mexe no texto sem subir a versão não vê a imagem velha).
+        let summary = {
+            use std::hash::{Hash, Hasher};
+            let mut hs = std::collections::hash_map::DefaultHasher::new();
+            doc.text[shown.0..shown.1].hash(&mut hs);
+            (first, last, w, h, k.to_bits(), size.to_bits(), sans, doc.scroll.to_bits(), doc.scroll_x.to_bits()).hash(&mut hs);
+            (selection, cursor_line, cursor_x.to_bits(), focused, look.current_line).hash(&mut hs);
+            (pal.current_line, text_color, t.accent, t.text_secondary, t.danger).hash(&mut hs);
+            (colors, underlines, &deco.trailing, deco.trailing_right).hash(&mut hs);
+            for (at, iw, label) in &inlays {
+                (at, iw.to_bits(), label).hash(&mut hs);
+            }
+            (doc.text.is_empty(), look.placeholder).hash(&mut hs);
+            hs.finish()
+        };
+        let kept = match self.ctx.text_area_images.remove(&id) {
+            Some((was, image)) if was == summary => Some(image),
+            _ => None,
+        };
         let [ar, ag, ab, _] = t.accent;
         let text_y = (line_h - size * 1.25) / 2.0;
         // Desenha um texto na fonte da área; devolve a largura desenhada.
@@ -4162,93 +4199,111 @@ impl<'a> Ui<'a> {
                 ui.ctx.text.draw_mono(pixmap, s, x, y, size, c)
             }
         };
-        if doc.text.is_empty() && !look.placeholder.is_empty() {
-            // A dica cortada com "…" quando a área é estreita.
-            let hint = self.fit_face(look.placeholder, size, sans, view.0);
-            draw(self, &mut clip, &hint, -doc.scroll_x, pad + text_y, t.text_secondary);
-        }
+        let clip = match kept {
+            Some(image) => image,
+            None => {
+                let Some(mut clip) = Pixmap::new((w as f32 * k).ceil() as u32, (h as f32 * k).ceil() as u32) else {
+                    return TextAreaResponse { response: r, pointer_index };
+                };
+                if doc.text.is_empty() && !look.placeholder.is_empty() {
+                    // A dica cortada com "…" quando a área é estreita.
+                    let hint = self.fit_face(look.placeholder, size, sans, view.0);
+                    draw(self, &mut clip, &hint, -doc.scroll_x, pad + text_y, t.text_secondary);
+                }
+                for line in first..last {
+                    let (start, end) = (starts[line], line_end(&doc.text, &starts, line));
+                    let y = pad + line as f32 * line_h - doc.scroll;
+                    let x0 = -doc.scroll_x;
+                    let trailing = has_trailing(line);
+                    if look.current_line && focused && line == cursor_line && selection.is_none() {
+                        fill_rounded(&mut clip, 0.0, y, w as f32, line_h, 0.0, color(pal.current_line.unwrap_or([ar, ag, ab, 14])));
+                    }
+                    if let Some((a, b)) = selection.filter(|(a, b)| *a <= end && *b >= start && !(a == b)) {
+                        let (sa, sb) = (a.max(start), b.min(end));
+                        let xa = width(self, &doc.text[start..sa]) + shift(start, sa, true);
+                        let xb = width(self, &doc.text[start..sb]) + shift(start, sb, false);
+                        // A quebra de linha selecionada aparece como um pouco a mais no fim (menos
+                        // numa linha com texto depois do fim: a marca ficaria embaixo dele).
+                        let extra = if b > end && !trailing { size * 0.5 } else { 0.0 };
+                        fill_rounded(&mut clip, x0 + xa, y, xb - xa + extra, line_h, 0.0, color([ar, ag, ab, 70]));
+                    }
+                    // O texto em pedaços por cor; o x de cada pedaço é medido do começo da linha
+                    // (sem somar pedaço a pedaço, que acumularia erro). Um pedaço do meio da linha
+                    // com tabulação é cortado nela (`tab_pieces`).
+                    for (a, b, c) in color_runs(&doc.text, start, end, colors) {
+                        let rgba = c.unwrap_or(text_color);
+                        for (p, q) in tab_pieces(&doc.text, start, a, b) {
+                            // Cortado também nas dicas em linha (o texto depois delas anda).
+                            let mut cuts: Vec<usize> = inlays.iter().map(|i| i.0).filter(|at| *at > p && *at < q).collect();
+                            cuts.dedup();
+                            let mut from = p;
+                            for to in cuts.into_iter().chain(std::iter::once(q)) {
+                                let x = x0 + if from == start { 0.0 } else { width(self, &doc.text[start..from]) } + shift(start, from, true);
+                                draw(self, &mut clip, &doc.text[from..to], x, y + text_y, rgba);
+                                from = to;
+                            }
+                        }
+                    }
+                    // As dicas em linha: texto menor e cinza numa cápsula, antes do caractere.
+                    for (at, iw, label) in inlays.iter().filter(|(at, _, _)| *at >= start && *at <= end) {
+                        let x = x0 + width(self, &doc.text[start..*at]) + shift(start, *at, false) + 2.0;
+                        let [r0, g0, b0, _] = t.text_secondary;
+                        fill_rounded(&mut clip, x, y + 2.0, iw - 4.0, line_h - 4.0, 4.0, color([r0, g0, b0, 30]));
+                        let ly = y + (line_h - inlay_size * 1.25) / 2.0;
+                        if sans {
+                            self.ctx.text.draw(&mut clip, label, x + 3.0, ly, inlay_size, FontWeight::Regular, t.text_secondary);
+                        } else {
+                            self.ctx.text.draw_mono(&mut clip, label, x + 3.0, ly, inlay_size, t.text_secondary);
+                        }
+                    }
+                    // Sublinhado pontilhado (erros), logo abaixo das letras.
+                    for (a, b) in underline_runs(&doc.text, start, end, underlines) {
+                        let xa = x0 + width(self, &doc.text[start..a]) + shift(start, a, true);
+                        let xb = x0 + width(self, &doc.text[start..b]) + shift(start, b, false);
+                        dotted_line(&mut clip, xa, xb, y + text_y + size * 1.2, t.danger);
+                    }
+                    // O texto do fim da linha (vários vêm um depois do outro, com 4 pt antes de
+                    // cada um); o fim da linha só é medido quando ela tem algum. O que não cabe
+                    // até a borda termina com "…": um número cortado não pode parecer inteiro.
+                    if trailing && deco.trailing_right {
+                        // Encostado à direita da área, sempre à vista (não rola com o texto); se o
+                        // código da linha chega lá, o aviso encolhe com "…" ou some.
+                        let line_end_x = x0 + width(self, &doc.text[start..end]) + shift(start, end, true) + 24.0;
+                        let texts: Vec<(&String, Rgba)> = deco.trailing.iter().filter(|(l, _, _)| *l == line).map(|(_, t, c)| (t, *c)).collect();
+                        let total: f32 = texts.iter().map(|(t, _)| width(self, t) + 12.0).sum();
+                        let right = w as f32 - 10.0;
+                        let mut x = (right - total).max(line_end_x);
+                        for (extra, rgba) in texts {
+                            let room = right - x;
+                            if room < 40.0 {
+                                break;
+                            }
+                            let shown = if width(self, extra) <= room { extra.clone() } else { self.fit_face(extra, size, sans, room) };
+                            x += draw(self, &mut clip, &shown, x, y + text_y, rgba) + 12.0;
+                        }
+                    } else if trailing {
+                        let mut x = x0 + width(self, &doc.text[start..end]) + shift(start, end, true) + 4.0;
+                        for (_, extra, rgba) in deco.trailing.iter().filter(|(l, _, _)| *l == line) {
+                            let room = w as f32 - 4.0 - x;
+                            let shown = if width(self, extra) <= room { extra.clone() } else { self.fit_face(extra, size, sans, room) };
+                            if room <= 0.0 || width(self, &shown) > room {
+                                break;
+                            }
+                            x += draw(self, &mut clip, &shown, x, y + text_y, *rgba) + 4.0;
+                        }
+                    }
+                }
+                if focused && selection.is_none() {
+                    let y = pad + cursor_line as f32 * line_h - doc.scroll;
+                    fill_rounded(&mut clip, cursor_x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(text_color));
+                }
+                clip
+            }
+        };
+        // A margem (números das linhas e marcas do Git) vai direto na janela, fora da
+        // imagem do texto: desenhada a cada quadro.
         for line in first..last {
-            let (start, end) = (starts[line], line_end(&doc.text, &starts, line));
             let y = pad + line as f32 * line_h - doc.scroll;
-            let x0 = -doc.scroll_x;
-            let trailing = has_trailing(line);
-            if look.current_line && focused && line == cursor_line && selection.is_none() {
-                fill_rounded(&mut clip, 0.0, y, w as f32, line_h, 0.0, color(pal.current_line.unwrap_or([ar, ag, ab, 14])));
-            }
-            if let Some((a, b)) = selection.filter(|(a, b)| *a <= end && *b >= start && !(a == b)) {
-                let (sa, sb) = (a.max(start), b.min(end));
-                let xa = width(self, &doc.text[start..sa]) + shift(start, sa, true);
-                let xb = width(self, &doc.text[start..sb]) + shift(start, sb, false);
-                // A quebra de linha selecionada aparece como um pouco a mais no fim (menos
-                // numa linha com texto depois do fim: a marca ficaria embaixo dele).
-                let extra = if b > end && !trailing { size * 0.5 } else { 0.0 };
-                fill_rounded(&mut clip, x0 + xa, y, xb - xa + extra, line_h, 0.0, color([ar, ag, ab, 70]));
-            }
-            // O texto em pedaços por cor; o x de cada pedaço é medido do começo da linha
-            // (sem somar pedaço a pedaço, que acumularia erro). Um pedaço do meio da linha
-            // com tabulação é cortado nela (`tab_pieces`).
-            for (a, b, c) in color_runs(&doc.text, start, end, &deco.colors) {
-                let rgba = c.unwrap_or(text_color);
-                for (p, q) in tab_pieces(&doc.text, start, a, b) {
-                    // Cortado também nas dicas em linha (o texto depois delas anda).
-                    let mut cuts: Vec<usize> = inlays.iter().map(|i| i.0).filter(|at| *at > p && *at < q).collect();
-                    cuts.dedup();
-                    let mut from = p;
-                    for to in cuts.into_iter().chain(std::iter::once(q)) {
-                        let x = x0 + if from == start { 0.0 } else { width(self, &doc.text[start..from]) } + shift(start, from, true);
-                        draw(self, &mut clip, &doc.text[from..to], x, y + text_y, rgba);
-                        from = to;
-                    }
-                }
-            }
-            // As dicas em linha: texto menor e cinza numa cápsula, antes do caractere.
-            for (at, iw, label) in inlays.iter().filter(|(at, _, _)| *at >= start && *at <= end) {
-                let x = x0 + width(self, &doc.text[start..*at]) + shift(start, *at, false) + 2.0;
-                let [r0, g0, b0, _] = t.text_secondary;
-                fill_rounded(&mut clip, x, y + 2.0, iw - 4.0, line_h - 4.0, 4.0, color([r0, g0, b0, 30]));
-                let ly = y + (line_h - inlay_size * 1.25) / 2.0;
-                if sans {
-                    self.ctx.text.draw(&mut clip, label, x + 3.0, ly, inlay_size, FontWeight::Regular, t.text_secondary);
-                } else {
-                    self.ctx.text.draw_mono(&mut clip, label, x + 3.0, ly, inlay_size, t.text_secondary);
-                }
-            }
-            // Sublinhado pontilhado (erros), logo abaixo das letras.
-            for (a, b) in underline_runs(&doc.text, start, end, &deco.underlines) {
-                let xa = x0 + width(self, &doc.text[start..a]) + shift(start, a, true);
-                let xb = x0 + width(self, &doc.text[start..b]) + shift(start, b, false);
-                dotted_line(&mut clip, xa, xb, y + text_y + size * 1.2, t.danger);
-            }
-            // O texto do fim da linha (vários vêm um depois do outro, com 4 pt antes de
-            // cada um); o fim da linha só é medido quando ela tem algum. O que não cabe
-            // até a borda termina com "…": um número cortado não pode parecer inteiro.
-            if trailing && deco.trailing_right {
-                // Encostado à direita da área, sempre à vista (não rola com o texto); se o
-                // código da linha chega lá, o aviso encolhe com "…" ou some.
-                let line_end_x = x0 + width(self, &doc.text[start..end]) + shift(start, end, true) + 24.0;
-                let texts: Vec<(&String, Rgba)> = deco.trailing.iter().filter(|(l, _, _)| *l == line).map(|(_, t, c)| (t, *c)).collect();
-                let total: f32 = texts.iter().map(|(t, _)| width(self, t) + 12.0).sum();
-                let right = w as f32 - 10.0;
-                let mut x = (right - total).max(line_end_x);
-                for (extra, rgba) in texts {
-                    let room = right - x;
-                    if room < 40.0 {
-                        break;
-                    }
-                    let shown = if width(self, extra) <= room { extra.clone() } else { self.fit_face(extra, size, sans, room) };
-                    x += draw(self, &mut clip, &shown, x, y + text_y, rgba) + 12.0;
-                }
-            } else if trailing {
-                let mut x = x0 + width(self, &doc.text[start..end]) + shift(start, end, true) + 4.0;
-                for (_, extra, rgba) in deco.trailing.iter().filter(|(l, _, _)| *l == line) {
-                    let room = w as f32 - 4.0 - x;
-                    let shown = if width(self, extra) <= room { extra.clone() } else { self.fit_face(extra, size, sans, room) };
-                    if room <= 0.0 || width(self, &shown) > room {
-                        break;
-                    }
-                    x += draw(self, &mut clip, &shown, x, y + text_y, *rgba) + 4.0;
-                }
-            }
             // Marcas da margem (Git): faixa na borda direita da margem, na tela inteira
             // (fora do recorte do texto).
             for (_, c, deleted) in deco.gutter.iter().filter(|(l, _, _)| *l == line) {
@@ -4281,11 +4336,13 @@ impl<'a> Ui<'a> {
                 }
             }
         }
-        if focused && selection.is_none() {
-            let y = pad + cursor_line as f32 * line_h - doc.scroll;
-            fill_rounded(&mut clip, cursor_x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(text_color));
+        // A cópia rápida (pixels opacos copiados, transparentes pulados): o `draw_pixmap`
+        // misturava pixel a pixel e levava uns 6 ms por quadro numa área grande.
+        crate::ui::draw::blit_px(self.canvas, &clip, crate::ui::draw::px(text_x.floor()), crate::ui::draw::px(rect.1.floor()), 1.0);
+        if self.ctx.text_area_images.len() > 16 {
+            self.ctx.text_area_images.clear();
         }
-        self.canvas.draw_pixmap(crate::ui::draw::px(text_x.floor()), crate::ui::draw::px(rect.1.floor()), clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+        self.ctx.text_area_images.insert(id, (summary, clip));
         // Barra de rolagem por cima do texto, quando ele passa da altura.
         let bar = ScrollBar { content: content_h, ..bar };
         self.scrollbar_draw(&bar, doc.scroll);
@@ -5987,7 +6044,7 @@ mod tests {
         let view = |ui: &mut Ui, doc: &mut TextDoc, seen: &mut Vec<String>| {
             let mut decorate = |d: &TextDoc| {
                 seen.push(d.text.clone());
-                Decorations { colors: vec![(0..1, green)], underlines: std::iter::once(2..3).collect(), trailing: vec![(0, "5".into(), blue)] }
+                Decorations { colors: vec![(0..1, green)], underlines: std::iter::once(2..3).collect(), trailing: vec![(0, "5".into(), blue)], ..Default::default() }
             };
             ui.text_area_with(doc, 200.0, TextAreaLook { line_numbers: false, sans: true, decorate: Some(&mut decorate), ..Default::default() })
         };

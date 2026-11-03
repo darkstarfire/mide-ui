@@ -58,6 +58,9 @@ impl<'a> Tool<'a> {
 /// Largura da faixa da divisória que pega o ponteiro (metade de cada lado da linha).
 const DIVIDER_HIT: f32 = 8.0;
 
+/// Retângulo na janela (x, y, largura, altura).
+type Rect = (f32, f32, f32, f32);
+
 impl<'a> Ui<'a> {
     /// Pede a forma do ponteiro enquanto ele estiver sobre esta janela (vale só neste
     /// quadro: o componente pede de novo a cada quadro em que o ponteiro está nele).
@@ -145,17 +148,28 @@ impl<'a> Ui<'a> {
     pub fn split(&mut self, left_width: &mut f32, min: f32, max: f32, left: impl FnOnce(&mut Ui), right: impl FnOnce(&mut Ui)) -> Response {
         let (x, y, w) = (self.x, self.cursor_y, self.width);
         let h = (self.visible.1 - y).max(1.0);
-        let hi = max.min(w - 80.0).max(min);
-        let lw = left_width.clamp(min, hi);
-        *left_width = lw;
-        let r = self.divider((x + lw - DIVIDER_HIT / 2.0, y, DIVIDER_HIT, h), true, left_width, min, hi, 1.0);
+        let area = self.to_window((x, y, w, h));
+        let (r, _, _) = self.split_divider(area, left_width, min, max);
         let lw = *left_width;
         self.clip((x, y, lw, h), left);
         self.clip((x + lw + 1.0, y, (w - lw - 1.0).max(1.0), h), right);
-        let t = self.ctx.theme.clone();
-        fill_rounded(self.canvas, x + lw, y, 1.0, h, 0.0, color(t.line));
         self.cursor_y = y + h;
         r
+    }
+
+    /// Só a divisória de [`Ui::split`] em `area` (na janela), para quem desenha os dois
+    /// lados por conta própria nos retângulos devolvidos (esquerdo e direito, na
+    /// janela): sem as sub-áreas, que copiam os pixels da área inteira na ida e na
+    /// volta (milissegundos por quadro numa área do tamanho de um editor).
+    pub fn split_divider(&mut self, area: Rect, left_width: &mut f32, min: f32, max: f32) -> (Response, Rect, Rect) {
+        let (x, y, w, h) = (area.0 - self.offset.0, area.1 - self.offset.1, area.2, area.3.max(1.0));
+        let hi = max.min(w - 80.0).max(min);
+        *left_width = left_width.clamp(min, hi);
+        let r = self.divider((x + *left_width - DIVIDER_HIT / 2.0, y, DIVIDER_HIT, h), true, left_width, min, hi, 1.0);
+        let lw = *left_width;
+        let t = self.ctx.theme.clone();
+        fill_rounded(self.canvas, x + lw, y, 1.0, h, 0.0, color(t.line));
+        (r, (area.0, area.1, lw, h), (area.0 + lw + 1.0, area.1, (w - lw - 1.0).max(1.0), h))
     }
 
     /// Dois painéis um sobre o outro, com a divisória arrastável: `bottom` recebe
@@ -165,18 +179,29 @@ impl<'a> Ui<'a> {
     pub fn split_vertical(&mut self, bottom_height: &mut f32, min: f32, max: f32, top: impl FnOnce(&mut Ui), bottom: impl FnOnce(&mut Ui)) -> Response {
         let (x, y, w) = (self.x, self.cursor_y, self.width);
         let h = (self.visible.1 - y).max(1.0);
+        let area = self.to_window((x, y, w, h));
+        let (r, _, _) = self.split_vertical_divider(area, bottom_height, min, max);
+        let edge = y + h - *bottom_height;
+        self.clip((x, y, w, (edge - y).max(1.0)), top);
+        self.clip((x, edge + 1.0, w, (*bottom_height - 1.0).max(1.0)), bottom);
+        self.cursor_y = y + h;
+        r
+    }
+
+    /// Só a divisória de [`Ui::split_vertical`] em `area` (na janela), como
+    /// [`Ui::split_divider`]: devolve os retângulos de cima e de baixo, na janela.
+    pub fn split_vertical_divider(&mut self, area: Rect, bottom_height: &mut f32, min: f32, max: f32) -> (Response, Rect, Rect) {
+        let (x, y, w, h) = (area.0 - self.offset.0, area.1 - self.offset.1, area.2, area.3.max(1.0));
         let hi = max.min(h - 60.0).max(min);
         *bottom_height = bottom_height.clamp(min, hi);
         let edge = y + h - *bottom_height;
         let r = self.divider((x, edge - DIVIDER_HIT / 2.0, w, DIVIDER_HIT), false, bottom_height, min, hi, -1.0);
         let bh = *bottom_height;
         let edge = y + h - bh;
-        self.clip((x, y, w, (edge - y).max(1.0)), top);
-        self.clip((x, edge + 1.0, w, (bh - 1.0).max(1.0)), bottom);
         let t = self.ctx.theme.clone();
         fill_rounded(self.canvas, x, edge, w, 1.0, 0.0, color(t.line));
-        self.cursor_y = y + h;
-        r
+        let top_h = (edge - y).max(1.0);
+        (r, (area.0, area.1, w, top_h), (area.0, area.1 + top_h + 1.0, w, (bh - 1.0).max(1.0)))
     }
 
     /// Barra lateral de vidro com a largura escolhida pelo app e a divisória
