@@ -233,6 +233,8 @@ pub const SYMBOLS: &[(&str, &str)] = &[
     // Preferências: engrenagem de oito dentes.
     ("preferences-system-symbolic", r##"<circle cx="8" cy="8" r="5.6" fill="none" stroke="#000" stroke-width="2.6" stroke-dasharray="2.2 2.2"/><circle cx="8" cy="8" r="3.7" fill="none" stroke="#000" stroke-width="2"/>"##),
     // Mostrar a barra lateral: janela com a coluna da esquerda.
+    // Extensões: peça de quebra-cabeça (desenho próprio).
+    ("application-x-addon-symbolic", r##"<path d="M3 5.5h2.2a1.6 1.6 0 1 1 3.2 0H11v2.6a1.6 1.6 0 1 1 0 3.2V14H8.4a1.6 1.6 0 1 0-3.2 0H3z" fill="none" stroke="#000" stroke-width="1.25" stroke-linejoin="round"/>"##),
     ("view-sidebar-end-symbolic", r##"<rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="#000" stroke-width="1.3"/><path d="M10 2.5v11" stroke="#000" stroke-width="1.3"/><path d="M11.5 5.2h1.2M11.5 7.2h1.2M11.5 9.2h1.2" stroke="#000" stroke-width="1.1" stroke-linecap="round"/>"##),
     ("view-sidebar-start-symbolic", r##"<rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="#000" stroke-width="1.3"/><path d="M6 2.5v11" stroke="#000" stroke-width="1.3"/><path d="M3.3 5.2h1.2M3.3 7.2h1.2M3.3 9.2h1.2" stroke="#000" stroke-width="1.1" stroke-linecap="round"/>"##),
     // Mostrar o painel de baixo (terminal integrado).
