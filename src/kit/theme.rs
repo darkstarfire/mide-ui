@@ -13,8 +13,10 @@ pub const RADIUS_SIDEBAR: f32 = RADIUS_WINDOW - INSET_FLOAT;
 /// Seleção dentro de menus e da barra lateral, linhas de lista.
 pub const RADIUS_ITEM: f32 = 8.0;
 /// Barra de ferramentas e as cápsulas dela.
-pub const TOOLBAR_HEIGHT: f32 = 52.0;
-pub const TOOLBAR_ITEM: f32 = 36.0;
+pub const TOOLBAR_HEIGHT: f32 = 46.0;
+pub const TOOLBAR_ITEM: f32 = 30.0;
+/// Largura de cada botão de um grupo da barra de ferramentas (`tool_group`).
+pub const TOOLBAR_SEG: f32 = 32.0;
 
 /// Cor em RGBA (0 a 255).
 pub type Rgba = [u8; 4];

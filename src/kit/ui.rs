@@ -3159,6 +3159,110 @@ impl<'a> Ui<'a> {
         self.tab_bar_icons(titles, &[], selected)
     }
 
+    /// Abas de editor de código, no visual tradicional (como as do VS Code e do Zed):
+    /// alinhadas à esquerda, do tamanho do nome (encolhem se não couberem), a escolhida
+    /// com o fundo do editor (`active_bg`; sem ele, o do cartão) e uma linha na cor de
+    /// destaque em cima; × à direita (sempre na escolhida, nas outras ao passar o
+    /// ponteiro) e, com mudanças não salvas, um ponto no lugar dele; + no fim. Devolve a
+    /// ação e o retângulo de cada aba (para arrastar).
+    pub fn editor_tabs(&mut self, titles: &[String], icons: &[String], modified: &[bool], selected: usize, active_bg: Option<Rgba>) -> (TabAction, Vec<(f32, f32, f32, f32)>) {
+        let t = self.ctx.theme.clone();
+        let h = 34.0;
+        let rect = self.alloc(None, h);
+        let mut action = TabAction::None;
+        let strip = if t.dark { [0, 0, 0, 40] } else { [0, 0, 0, 12] };
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, h, 0.0, color(strip));
+        fill_rounded(self.canvas, rect.0, rect.1 + h - 1.0, rect.2, 1.0, 0.0, color(t.line));
+        let plus = 30.0;
+        let room = rect.2 - plus - 4.0;
+        let size = t.font_small;
+        // Largura de cada aba pelo nome; se a soma não cabe, todas encolhem por igual.
+        let natural: Vec<f32> = titles
+            .iter()
+            .enumerate()
+            .map(|(i, title)| {
+                let iw = if icons.get(i).is_some_and(|n| !n.is_empty()) { 20.0 } else { 0.0 };
+                (self.measure(title, size, FontWeight::Regular) + iw + 44.0).clamp(96.0, 240.0)
+            })
+            .collect();
+        let total: f32 = natural.iter().sum();
+        let k = if total > room && total > 0.0 { room / total } else { 1.0 };
+        let mut rects = Vec::with_capacity(titles.len());
+        let mut x = rect.0;
+        for (i, title) in titles.iter().enumerate() {
+            let w = (natural[i] * k).max(48.0);
+            let tab = (x, rect.1, w, h - 1.0);
+            x += w;
+            rects.push(tab);
+            let id = self.ctx.id();
+            let r = self.interact(id, tab);
+            let on = i == selected;
+            if on {
+                fill_rounded(self.canvas, tab.0, tab.1, tab.2, tab.3 + 1.0, 0.0, color(active_bg.unwrap_or(t.card)));
+                fill_rounded(self.canvas, tab.0, tab.1, tab.2, 2.0, 0.0, color(t.accent));
+            } else if r.hovered {
+                fill_rounded(self.canvas, tab.0, tab.1, tab.2, tab.3, 0.0, color(t.hover));
+            }
+            // Divisória fina entre as abas.
+            fill_rounded(self.canvas, tab.0 + tab.2 - 1.0, tab.1 + 7.0, 1.0, tab.3 - 14.0, 0.0, color(t.line));
+            let close = (tab.0 + tab.2 - 24.0, tab.1 + (tab.3 - 16.0) / 2.0, 16.0, 16.0);
+            let over_close = r.hovered && self.over(close);
+            let dirty = modified.get(i).copied().unwrap_or(false);
+            let tc = if on { t.text } else { t.text_secondary };
+            if (on || r.hovered) && !(dirty && !r.hovered) {
+                if over_close {
+                    fill_rounded(self.canvas, close.0, close.1, 16.0, 16.0, 4.0, color(t.shade(30)));
+                }
+                let (cx, cy) = (close.0 + 8.0, close.1 + 8.0);
+                let mut pb = PathBuilder::new();
+                pb.move_to(cx - 3.5, cy - 3.5);
+                pb.line_to(cx + 3.5, cy + 3.5);
+                pb.move_to(cx + 3.5, cy - 3.5);
+                pb.line_to(cx - 3.5, cy + 3.5);
+                if let Some(path) = pb.finish() {
+                    let mut paint = Paint { anti_alias: true, ..Default::default() };
+                    paint.set_color(color(tc));
+                    let stroke = Stroke { width: 1.3, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+                    self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+                }
+            } else if dirty {
+                fill_rounded(self.canvas, close.0 + 4.5, close.1 + 4.5, 7.0, 7.0, 3.5, color(tc));
+            }
+            if r.clicked && over_close {
+                action = TabAction::Close(i);
+            } else if r.clicked && !on {
+                action = TabAction::Select(i);
+            }
+            let mut tx = tab.0 + 12.0;
+            if let Some(name) = icons.get(i).filter(|n| !n.is_empty())
+                && let Some(pix) = self.ctx.icon(&[name.as_str()], 16, false)
+            {
+                crate::ui::draw::blit(self.canvas, &pix, tx as i32, (tab.1 + (tab.3 - 16.0) / 2.0) as i32, 1.0);
+                tx += 20.0;
+            }
+            let shown = self.fit(title, size, FontWeight::Regular, (tab.0 + tab.2 - 28.0 - tx).max(10.0));
+            self.draw_text(&shown, tx, tab.1 + (tab.3 - size * 1.25) / 2.0, size, FontWeight::Regular, tc);
+            if shown != *title {
+                self.tooltip(&r, title);
+            }
+        }
+        // + logo depois da última aba.
+        let id = self.ctx.id();
+        let add = ((x + 4.0).min(rect.0 + rect.2 - plus), rect.1 + (h - 26.0) / 2.0, 26.0, 26.0);
+        let r = self.interact(id, add);
+        self.tooltip(&r, "New Tab");
+        if r.hovered {
+            fill_rounded(self.canvas, add.0, add.1, 26.0, 26.0, 6.0, color(t.hover));
+        }
+        let (cx, cy) = (add.0 + 13.0, add.1 + 13.0);
+        fill_rounded(self.canvas, cx - 5.0, cy - 0.65, 10.0, 1.3, 0.65, color(t.text_secondary));
+        fill_rounded(self.canvas, cx - 0.65, cy - 5.0, 1.3, 10.0, 0.65, color(t.text_secondary));
+        if r.clicked {
+            action = TabAction::New;
+        }
+        (action, rects)
+    }
+
     /// Como `tab_bar`, com um ícone antes de cada título (nome do tema ou caminho de
     /// um arquivo; vazio: sem ícone), como as abas dos editores de código.
     pub fn tab_bar_icons(&mut self, titles: &[String], icons: &[String], selected: usize) -> TabAction {
@@ -4808,7 +4912,7 @@ impl<'a> Ui<'a> {
     fn toolbar_buttons_impl(&mut self, items: &[(&str, &str, bool, bool)]) -> (Option<usize>, Vec<Response>) {
         let mut responses = Vec::with_capacity(items.len());
         let t = self.ctx.theme.clone();
-        let seg = 40.0;
+        let seg = super::theme::TOOLBAR_SEG;
         let h = super::theme::TOOLBAR_ITEM;
         let rect = self.alloc(Some(seg * items.len() as f32 + 4.0), h);
         capsule(self.canvas, rect, &t);
@@ -4821,13 +4925,13 @@ impl<'a> Ui<'a> {
             if r.clicked && *enabled {
                 clicked = Some(i);
             }
-            let pill = (r_rect.0 + 3.0, r_rect.1 + 4.0, r_rect.2 - 6.0, r_rect.3 - 8.0);
+            let pill = (r_rect.0 + 2.0, r_rect.1 + 3.0, r_rect.2 - 4.0, r_rect.3 - 6.0);
             if *on {
                 fill_rounded(self.canvas, pill.0, pill.1, pill.2, pill.3, pill.3 / 2.0, color(t.shade(if t.dark { 40 } else { 22 })));
             } else if r.hovered && *enabled {
                 fill_rounded(self.canvas, pill.0, pill.1, pill.2, pill.3, pill.3 / 2.0, color(t.shade(if t.dark { 24 } else { 12 })));
             }
-            let size = 18;
+            let size = 16;
             let (ix, iy) = ((r_rect.0 + (seg - size as f32) / 2.0) as i32, (r_rect.1 + (h - size as f32) / 2.0) as i32);
             let c = if *enabled { t.text } else { t.shade(70) };
             match self.ctx.icon(&[icon], size, false) {
@@ -4835,7 +4939,7 @@ impl<'a> Ui<'a> {
                 Some(pix) => crate::ui::draw::blit(self.canvas, &pix, ix, iy, if *enabled { 1.0 } else { 0.35 }),
                 None => {
                     let fw = self.measure(fallback, 16.0, FontWeight::Semibold);
-                    self.draw_text(fallback, r_rect.0 + (seg - fw) / 2.0, r_rect.1 + 8.0, 16.0, FontWeight::Semibold, c);
+                    self.draw_text(fallback, r_rect.0 + (seg - fw) / 2.0, r_rect.1 + (h - 20.0) / 2.0, 16.0, FontWeight::Semibold, c);
                 }
             }
         }
