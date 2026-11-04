@@ -1791,7 +1791,7 @@ impl<'a> Ui<'a> {
         if let Some(pix) = pix {
             crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 10.0) as i32, (rect.1 + 8.0) as i32, 1.0);
         }
-        let (main, side) = if selected { (t.on_accent, [230, 236, 255, 255]) } else { (t.text, t.text_secondary) };
+        let (main, side) = if selected { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
         let dw = if detail.is_empty() { 0.0 } else { self.measure(detail, t.font_small, FontWeight::Regular) + 16.0 };
         let shown = self.fit(title, t.font + 1.0, FontWeight::Regular, (rect.2 - 56.0 - dw).max(0.0));
         self.draw_text(&shown, rect.0 + 48.0, rect.1 + (44.0 - (t.font + 1.0) * 1.25) / 2.0, t.font + 1.0, FontWeight::Regular, main);
@@ -2733,7 +2733,7 @@ impl<'a> Ui<'a> {
             fill_rounded(self.canvas, x - grow, y - grow, w + 2.0 * grow, h + 2.0 * grow, w / 2.0 + grow, color(*c));
             outline(self.canvas, (x - grow, y - grow, w + 2.0 * grow, h + 2.0 * grow), w / 2.0 + grow, t.shade(30));
             if i == *selected {
-                fill_rounded(self.canvas, x + w / 2.0 - 3.5, y + h / 2.0 - 3.5, 7.0, 7.0, 3.5, color([255, 255, 255, 255]));
+                fill_rounded(self.canvas, x + w / 2.0 - 3.5, y + h / 2.0 - 3.5, 7.0, 7.0, 3.5, color(crate::kit::theme::on_color(*c)));
             }
         }
         r

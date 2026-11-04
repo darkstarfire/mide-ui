@@ -135,6 +135,15 @@ impl Theme {
         let dark = system_dark();
         let mut theme = if dark { Self::dark() } else { Self::default() };
         theme.accent = system_accent(dark);
+        theme.on_accent = on_color(theme.accent);
+        // Vidro e transparências com um toque da cor de destaque (como o macOS): as
+        // superfícies translúcidas puxam um pouco para a cor; os cartões e o fundo das
+        // janelas ficam neutros, para o texto e as fotos continuarem com a cor certa.
+        if let Some((tint, amount)) = glass_tint(dark) {
+            theme.sidebar_glass = mix(theme.sidebar_glass, tint, amount * 1.2);
+            theme.sidebar = mix(theme.sidebar, tint, amount * 0.6);
+            theme.menu = mix(theme.menu, tint, amount * 0.6);
+        }
         theme
     }
 
@@ -146,7 +155,9 @@ impl Theme {
 
 /// Cores de destaque (Configurações → Aparência), como as do Mac: chave gravada, nome
 /// na tela (em inglês; quem mostra passa por [`tr`](crate::kit::tr)) e a cor no tema claro e no escuro (um pouco mais clara no escuro, para ler
-/// bem). Todas aguentam texto branco por cima nos dois temas.
+/// bem). O texto por cima de cada uma vem de [`on_color`]: branco nas cores, escuro no
+/// branco. O branco no tema claro e o preto no escuro ficam um tom afastados do fundo,
+/// para a seleção e os interruptores ligados continuarem à vista.
 pub const ACCENTS: &[(&str, &str, [u8; 3], [u8; 3])] = &[
     ("blue", "Blue", [10, 110, 235], [30, 125, 245]),
     ("purple", "Purple", [135, 70, 200], [160, 95, 225]),
@@ -156,7 +167,39 @@ pub const ACCENTS: &[(&str, &str, [u8; 3], [u8; 3])] = &[
     ("yellow", "Yellow", [195, 140, 0], [215, 160, 10]),
     ("green", "Green", [35, 150, 65], [50, 170, 80]),
     ("graphite", "Graphite", [115, 115, 125], [140, 140, 150]),
+    ("white", "White", [222, 222, 228], [242, 242, 246]),
+    ("black", "Black", [28, 28, 32], [6, 6, 8]),
 ];
+
+/// Cor do texto e dos símbolos por cima de `c`: escuro sobre cores claras (o destaque
+/// branco), branco nas outras.
+pub fn on_color(c: Rgba) -> Rgba {
+    let luma = 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32;
+    if luma > 165.0 { [24, 24, 28, 255] } else { [255, 255, 255, 255] }
+}
+
+/// Vidro tingido pela cor de destaque (`[appearance] tint`, ligado por padrão;
+/// Configurações → Aparência). Só no mide: fora dele, o tema segue o sistema.
+pub fn tint_enabled() -> bool {
+    crate::control_client::on_mide() && !matches!(crate::settings_file::cached("appearance", "tint"), Some(crate::settings_file::Value::Bool(false)))
+}
+
+/// Cor e força do toque de cor no vidro e nas transparências (barra, dock, menus,
+/// barras laterais), ou `None` com o tingido desligado. Mais forte no escuro, onde o
+/// mesmo tanto de cor aparece menos.
+pub fn glass_tint(dark: bool) -> Option<([u8; 3], f32)> {
+    if !tint_enabled() {
+        return None;
+    }
+    let [r, g, b, _] = system_accent(dark);
+    Some(([r, g, b], if dark { 0.14 } else { 0.10 }))
+}
+
+/// `base` com `amount` (0 a 1) de `over`, guardando a transparência de `base`.
+pub fn mix(base: Rgba, over: [u8; 3], amount: f32) -> Rgba {
+    let m = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * amount.clamp(0.0, 1.0)).round() as u8;
+    [m(base[0], over[0]), m(base[1], over[1]), m(base[2], over[2]), base[3]]
+}
 
 /// Chave da cor de destaque escolhida (`blue` se nenhuma ou desconhecida).
 pub fn accent_key() -> String {
@@ -253,4 +296,27 @@ fn unwrap_variant(v: &zbus::zvariant::OwnedValue) -> zbus::zvariant::Value<'stat
 /// Converte para a cor do tiny-skia.
 pub fn color(c: Rgba) -> Color {
     Color::from_rgba8(c[0], c[1], c[2], c[3])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn texto_sobre_o_destaque_contrasta() {
+        for (key, _, light, dark) in ACCENTS {
+            for c in [light, dark] {
+                let on = on_color([c[0], c[1], c[2], 255]);
+                let luma = |c: [u8; 3]| 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32;
+                let diff = (luma(*c) - luma([on[0], on[1], on[2]])).abs();
+                assert!(diff > 90.0, "{key}: texto sem contraste ({diff})");
+            }
+        }
+    }
+
+    #[test]
+    fn mistura_guarda_a_transparencia() {
+        assert_eq!(mix([0, 0, 0, 100], [200, 100, 50], 0.5), [100, 50, 25, 100]);
+        assert_eq!(mix([10, 20, 30, 255], [200, 100, 50], 0.0), [10, 20, 30, 255]);
+    }
 }

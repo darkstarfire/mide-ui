@@ -566,6 +566,12 @@ msgstr "Verde"
 msgid "Graphite"
 msgstr "Grafite"
 
+msgid "White"
+msgstr "Branco"
+
+msgid "Black"
+msgstr "Preto"
+
 msgid "Glass"
 msgstr "Vidro"
 
