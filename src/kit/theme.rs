@@ -147,7 +147,7 @@ impl Theme {
         theme.tint = ui_tint(dark);
         if let Some(c) = theme.tint {
             // No claro a mesma mistura aparece menos (fundos quase brancos): um pouco mais.
-            let (bg, side, card, menu, glass) = if dark { (0.10, 0.14, 0.08, 0.12, 0.18) } else { (0.10, 0.15, 0.04, 0.10, 0.20) };
+            let (bg, side, card, menu, glass) = if dark { (0.12, 0.16, 0.09, 0.14, 0.20) } else { (0.16, 0.24, 0.07, 0.16, 0.30) };
             theme.background = mix(theme.background, c, bg);
             theme.sidebar = mix(theme.sidebar, c, side);
             theme.card = mix(theme.card, c, card);
@@ -161,7 +161,7 @@ impl Theme {
     /// mantendo a transparência; igual a `base` no padrão.
     pub fn tinted(&self, base: Rgba) -> Rgba {
         match self.tint {
-            Some(c) => mix(base, c, if self.dark { 0.22 } else { 0.22 }),
+            Some(c) => mix(base, c, if self.dark { 0.25 } else { 0.34 }),
             None => base,
         }
     }
@@ -221,13 +221,15 @@ pub fn ui_tint(dark: bool) -> Option<[u8; 3]> {
 /// a interface é pintada ([`ui_tint`]). Mais forte no escuro, onde o mesmo tanto de
 /// cor aparece menos.
 pub fn glass_tint(dark: bool) -> Option<([u8; 3], f32)> {
-    ui_tint(dark).map(|c| (c, if dark { 0.16 } else { 0.18 }))
+    ui_tint(dark).map(|c| (c, if dark { 0.18 } else { 0.28 }))
 }
 
-/// Transparência do véu na cor escolhida por cima do vidro das peças do shell (dock,
-/// fundo da barra superior), como o vidro colorido dos Macs: a cor aparece e o
-/// desfoque continua visível através dela.
-pub const TINT_VEIL: u8 = 46;
+/// Transparência do véu na cor escolhida por cima do vidro das peças do shell (dock),
+/// como o vidro colorido dos Macs: a cor aparece e o desfoque continua visível através
+/// dela. Mais forte no claro, onde o vidro é quase branco.
+pub fn tint_veil(dark: bool) -> u8 {
+    if dark { 52 } else { 72 }
+}
 
 /// `base` com `amount` (0 a 1) de `over`, guardando a transparência de `base`.
 pub fn mix(base: Rgba, over: [u8; 3], amount: f32) -> Rgba {
