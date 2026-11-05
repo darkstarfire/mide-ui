@@ -795,6 +795,8 @@ pub struct Ctx {
     /// A janela está em tela cheia: os botões da janela somem (o compositor mostra a
     /// barra de título dele na faixa revelada no topo, como no Mac).
     pub fullscreen: bool,
+    /// Tela cheia pedida pelo app (`Ui::set_fullscreen`), feita depois do quadro.
+    pub fullscreen_request: Option<bool>,
     /// Janela de tamanho fixo (`Window::fixed_size`): minimizar e maximizar desativados.
     pub fixed_size: bool,
     /// Acorda a janela de outra thread (`Ui::waker`).
@@ -905,6 +907,7 @@ impl Ctx {
             content_window: false,
             maximized: false,
             fullscreen: false,
+            fullscreen_request: None,
             fixed_size: false,
             waker: None,
             input_region: None,
@@ -1580,6 +1583,20 @@ impl<'a> Ui<'a> {
     /// A janela está em tela cheia.
     pub fn fullscreen(&self) -> bool {
         self.ctx.fullscreen
+    }
+
+    /// Pede ao compositor para pôr a janela em tela cheia (ou tirar dela), como o
+    /// `NSWindow.toggleFullScreen`: o player com F ou o duplo clique no vídeo.
+    pub fn set_fullscreen(&mut self, on: bool) {
+        if on != self.ctx.fullscreen {
+            self.ctx.fullscreen_request = Some(on);
+        }
+    }
+
+    /// Entra ou sai da tela cheia.
+    pub fn toggle_fullscreen(&mut self) {
+        let on = !self.ctx.fullscreen;
+        self.set_fullscreen(on);
     }
 
     /// Janela modal (diálogo): escurece a janela e mostra um painel de vidro branco no

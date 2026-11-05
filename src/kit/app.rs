@@ -980,6 +980,10 @@ impl Runner {
             self.ctx.paint_overlay(&mut canvas);
             // Escolha num menu da barra da janela: os do menu "Janela" são da janela; o
             // resto vai ao app no próximo quadro (como os da barra superior).
+            // Tela cheia pedida pelo app (`Ui::set_fullscreen`).
+            if let (Some(on), Shell::Xdg(xdg)) = (self.ctx.fullscreen_request.take(), &self.shell) {
+                if on { xdg.set_fullscreen(None) } else { xdg.unset_fullscreen() }
+            }
             if let Some(action) = window_menu {
                 match (action.as_str(), &self.shell) {
                     (super::menubar::MINIMIZE, Shell::Xdg(xdg)) => xdg.set_minimized(),
