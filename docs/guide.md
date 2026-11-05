@@ -585,6 +585,19 @@ tema.accent = [52, 199, 89, 255];   // verde
 run(Window::new("Verde").theme(tema), MeuApp::default())
 ```
 
+`Window::theme` fixa o tema: o app deixa de seguir o claro, o escuro e a cor de
+destaque do sistema. Para seguir o sistema e mudar só um detalhe, use
+`Window::theme_adjust`, que reaplica o ajuste a cada troca de tema:
+
+```rust
+fn nomes_brancos(t: &mut Theme) { t.tile_text = [255, 255, 255, 255]; }
+run(Window::new("Mesa").theme_adjust(nomes_brancos), MeuApp::default())
+```
+
+Com "Interface na cor de destaque" ligada no mide, `Theme::system()` já vem com a cor
+nos fundos (`theme.tint`). Quem pinta um fundo com cor própria passa por
+`theme.tinted(cor)` para acompanhar.
+
 Na barra lateral, um item sem ícone vira um título de grupo (`("Favoritos", "")`).
 `ui.sidebar_area` é igual, mas entrega a área inteira à direita, sem margem nem
 rolagem: dá para pôr uma `toolbar` fixa e uma `page` embaixo.

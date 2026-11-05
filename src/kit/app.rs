@@ -116,6 +116,9 @@ pub struct Window {
     pub theme: Theme,
     /// O tema foi escolhido pelo app (`Window::theme`): não segue o claro/escuro do sistema.
     pub theme_fixed: bool,
+    /// Ajuste por cima do tema do sistema (`Window::theme_adjust`): o app segue o claro,
+    /// o escuro e a cor de destaque e só muda o que precisa (a mesa: nomes brancos).
+    pub theme_adjust: Option<fn(&mut Theme)>,
     /// Camada por cima de tudo (`Window::overlay`), em vez de janela comum.
     pub overlay: Option<String>,
     /// Camada de fundo, atrás das janelas (`Window::desktop`).
@@ -151,6 +154,7 @@ impl Window {
             min_size: (360, 240),
             theme: Theme::system(),
             theme_fixed: false,
+            theme_adjust: None,
             overlay: None,
             desktop: false,
             dropdown: false,
@@ -289,6 +293,15 @@ impl Window {
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self.theme_fixed = true;
+        self
+    }
+
+    /// Segue o tema do sistema (claro, escuro, cor de destaque, interface na cor) com
+    /// um ajuste do app por cima, refeito a cada troca de tema.
+    pub fn theme_adjust(mut self, adjust: fn(&mut Theme)) -> Self {
+        adjust(&mut self.theme);
+        self.theme_adjust = Some(adjust);
+        self.theme_fixed = false;
         self
     }
 }
@@ -463,6 +476,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             ctx
         },
         follow_theme: !window.theme_fixed,
+        theme_adjust: window.theme_adjust,
         native_scale: window.native_scale,
         scale: 1.0,
         viewport,
@@ -575,8 +589,18 @@ fn on_tick(runner: &mut Runner) -> TimeoutAction {
     // Claro/escuro trocado nas Configurações: o app muda na hora.
     if runner.follow_theme {
         // Claro/escuro ou cor de destaque trocados: o app muda na hora.
-        let fresh = if check { Some(Theme::system()) } else { None };
-        if let Some(theme) = fresh.filter(|t| t.dark != runner.ctx.theme.dark || t.accent != runner.ctx.theme.accent) {
+        let fresh = if check {
+            let mut t = Theme::system();
+            if let Some(adjust) = runner.theme_adjust {
+                adjust(&mut t);
+            }
+            Some(t)
+        } else {
+            None
+        };
+        // Também a interface na cor de destaque ligada ou desligada (a cor muda sem o
+        // destaque mudar).
+        if let Some(theme) = fresh.filter(|t| t.dark != runner.ctx.theme.dark || t.accent != runner.ctx.theme.accent || t.tint != runner.ctx.theme.tint) {
             runner.ctx.theme = theme;
             runner.last_frame = None;
             runner.dirty = true;
@@ -694,6 +718,8 @@ struct Runner {
     tick_at: std::time::Instant,
     /// Segue o tema do sistema (verificado uma vez por segundo).
     follow_theme: bool,
+    /// Ajuste do app por cima do tema do sistema (`Window::theme_adjust`).
+    theme_adjust: Option<fn(&mut Theme)>,
     /// Desenha na escala da tela (`Window::native_scale`), a escala atual (pixels por
     /// ponto) e os objetos do viewporter e da escala fracionária.
     native_scale: bool,

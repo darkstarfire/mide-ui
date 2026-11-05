@@ -57,6 +57,10 @@ pub struct Theme {
     pub sidebar_glass: Rgba,
     /// Tema escuro (apps que desenham por conta própria escolhem as cores por aqui).
     pub dark: bool,
+    /// Cor que pinta a interface (Configurações → Aparência), ou `None` no padrão e nas
+    /// cores neutras. Quem pinta fundos com cor fixa (menus, popovers, vidro) passa por
+    /// [`Theme::tinted`].
+    pub tint: Option<[u8; 3]>,
     /// Cantos dos cartões e dos controles.
     pub radius: f32,
     pub control_radius: f32,
@@ -91,6 +95,7 @@ impl Default for Theme {
             danger: [210, 40, 40, 255],
             sidebar_glass: [248, 248, 250, 178],
             dark: false,
+            tint: None,
             radius: 10.0,
             control_radius: 7.0,
             font: 13.5,
@@ -139,15 +144,26 @@ impl Theme {
         // Interface na cor escolhida (como os Macs coloridos): fundos, barras laterais,
         // cartões e menus puxam de leve para a cor. O padrão (azul) e as cores neutras
         // (grafite, branco, preto) deixam o claro e o escuro como sempre foram.
-        if let Some(c) = ui_tint(dark) {
-            let k = if dark { 1.4 } else { 1.0 };
-            theme.background = mix(theme.background, c, 0.07 * k);
-            theme.sidebar = mix(theme.sidebar, c, 0.10 * k);
-            theme.card = mix(theme.card, c, 0.03 * k);
-            theme.menu = mix(theme.menu, c, 0.06 * k);
-            theme.sidebar_glass = mix(theme.sidebar_glass, c, 0.12 * k);
+        theme.tint = ui_tint(dark);
+        if let Some(c) = theme.tint {
+            // No claro a mesma mistura aparece menos (fundos quase brancos): um pouco mais.
+            let (bg, side, card, menu, glass) = if dark { (0.10, 0.14, 0.08, 0.12, 0.18) } else { (0.10, 0.15, 0.04, 0.10, 0.20) };
+            theme.background = mix(theme.background, c, bg);
+            theme.sidebar = mix(theme.sidebar, c, side);
+            theme.card = mix(theme.card, c, card);
+            theme.menu = mix(theme.menu, c, menu);
+            theme.sidebar_glass = mix(theme.sidebar_glass, c, glass);
         }
         theme
+    }
+
+    /// Fundo `base` (menus, popovers, painéis de vidro) com o toque da cor escolhida,
+    /// mantendo a transparência; igual a `base` no padrão.
+    pub fn tinted(&self, base: Rgba) -> Rgba {
+        match self.tint {
+            Some(c) => mix(base, c, if self.dark { 0.22 } else { 0.22 }),
+            None => base,
+        }
     }
 
     /// Tom de contraste com a transparência `alpha` (preto no claro, branco no escuro).
@@ -205,8 +221,13 @@ pub fn ui_tint(dark: bool) -> Option<[u8; 3]> {
 /// a interface é pintada ([`ui_tint`]). Mais forte no escuro, onde o mesmo tanto de
 /// cor aparece menos.
 pub fn glass_tint(dark: bool) -> Option<([u8; 3], f32)> {
-    ui_tint(dark).map(|c| (c, if dark { 0.14 } else { 0.10 }))
+    ui_tint(dark).map(|c| (c, if dark { 0.16 } else { 0.18 }))
 }
+
+/// Transparência do véu na cor escolhida por cima do vidro das peças do shell (dock,
+/// fundo da barra superior), como o vidro colorido dos Macs: a cor aparece e o
+/// desfoque continua visível através dela.
+pub const TINT_VEIL: u8 = 46;
 
 /// `base` com `amount` (0 a 1) de `over`, guardando a transparência de `base`.
 pub fn mix(base: Rgba, over: [u8; 3], amount: f32) -> Rgba {

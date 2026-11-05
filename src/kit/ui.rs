@@ -1749,7 +1749,7 @@ impl<'a> Ui<'a> {
         // painéis grandes continuam baratos.
         crate::ui::draw::soft_shadow(self.canvas, x, y, width, h, radius, 16.0, 6.0, 60);
         let veil = if glass { 178 } else if self.ctx.layer { 246 } else { 255 };
-        let [vr, vg, vb, _] = if self.ctx.theme.dark { self.ctx.theme.card } else { [248, 248, 250, 255] };
+        let [vr, vg, vb, _] = if self.ctx.theme.dark { self.ctx.theme.card } else { self.ctx.theme.tinted([248, 248, 250, 255]) };
         crate::ui::draw::paint_rounded_solid(self.canvas, x, y, width, h, radius, [vr, vg, vb, veil]);
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, width - 1.0, h - 1.0, radius) {
             let mut paint = Paint::default();
@@ -2137,7 +2137,7 @@ impl<'a> Ui<'a> {
             let clear = Paint { blend_mode: tiny_skia::BlendMode::Clear, anti_alias: true, ..Default::default() };
             overlay.fill_path(&path, &clear, FillRule::Winding, Transform::identity(), None);
         }
-        let veil = if t.dark { [40, 40, 44, 175] } else { [248, 248, 250, 165] };
+        let veil = t.tinted(if t.dark { [40, 40, 44, 175] } else { [248, 248, 250, 165] });
         fill_rounded(overlay, x, y0, w, h, radius, color(veil));
         outline(overlay, (x, y0, w, h), radius, if t.dark { [255, 255, 255, 30] } else { [0, 0, 0, 16] });
         let mut y = y0 + 5.0;
@@ -3416,7 +3416,7 @@ impl<'a> Ui<'a> {
         self.ctx.in_modal = true;
         let rect = self.glass_panel(x, y, width, super::theme::RADIUS_ITEM + 10.0, add);
         self.ctx.in_modal = false;
-        let fill = if t.dark { t.card } else { [248, 248, 250, 255] };
+        let fill = if t.dark { t.card } else { t.tinted([248, 248, 250, 255]) };
         crate::ui::draw::menu_arrow(self.canvas, anchor.0 + anchor.2 / 2.0, y, false, fill);
         self.ctx.memory.modal_rect = Some((self.offset.0 + rect.0, self.offset.1 + rect.1, rect.2, rect.3));
         self.ctx.memory.modal_drawn = true;
