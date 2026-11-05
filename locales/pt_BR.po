@@ -566,6 +566,9 @@ msgstr "Verde"
 msgid "Graphite"
 msgstr "Grafite"
 
+msgid "Default (Blue)"
+msgstr "Padrão (azul)"
+
 msgid "White"
 msgstr "Branco"
 

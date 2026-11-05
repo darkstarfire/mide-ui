@@ -53,5 +53,5 @@ pub use menubar::{window_menu, MenuGroup, MenuItem};
 pub use picker::{ListPicker, PickGroup, PickItem, Picked};
 pub use screens::Screen;
 pub use textarea::{Decorations, TextDoc};
-pub use theme::{accent_key, glass_tint, mix, on_color, scrollbars_always, system_accent, system_dark, tint_enabled, Rgba, Theme, ACCENTS, RADIUS_WINDOW, TOOLBAR_HEIGHT, TOOLBAR_ITEM, TOOLBAR_SEG};
+pub use theme::{accent_key, glass_tint, mix, on_color, scrollbars_always, system_accent, system_dark, tint_enabled, ui_tint, Rgba, Theme, ACCENTS, RADIUS_WINDOW, TOOLBAR_HEIGHT, TOOLBAR_ITEM, TOOLBAR_SEG};
 pub use ui::{ArrangedScreen, ButtonStyle, Cursor, FocusAnim, LockField, Tool, Menu, Response, TextAreaLook, TextAreaResponse, TabAction, TextAreaColors, Tile, Ui, WindowRequest, TAG_COLORS};

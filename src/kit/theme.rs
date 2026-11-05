@@ -136,13 +136,16 @@ impl Theme {
         let mut theme = if dark { Self::dark() } else { Self::default() };
         theme.accent = system_accent(dark);
         theme.on_accent = on_color(theme.accent);
-        // Vidro e transparências com um toque da cor de destaque (como o macOS): as
-        // superfícies translúcidas puxam um pouco para a cor; os cartões e o fundo das
-        // janelas ficam neutros, para o texto e as fotos continuarem com a cor certa.
-        if let Some((tint, amount)) = glass_tint(dark) {
-            theme.sidebar_glass = mix(theme.sidebar_glass, tint, amount * 1.2);
-            theme.sidebar = mix(theme.sidebar, tint, amount * 0.6);
-            theme.menu = mix(theme.menu, tint, amount * 0.6);
+        // Interface na cor escolhida (como os Macs coloridos): fundos, barras laterais,
+        // cartões e menus puxam de leve para a cor. O padrão (azul) e as cores neutras
+        // (grafite, branco, preto) deixam o claro e o escuro como sempre foram.
+        if let Some(c) = ui_tint(dark) {
+            let k = if dark { 1.4 } else { 1.0 };
+            theme.background = mix(theme.background, c, 0.07 * k);
+            theme.sidebar = mix(theme.sidebar, c, 0.10 * k);
+            theme.card = mix(theme.card, c, 0.03 * k);
+            theme.menu = mix(theme.menu, c, 0.06 * k);
+            theme.sidebar_glass = mix(theme.sidebar_glass, c, 0.12 * k);
         }
         theme
     }
@@ -159,7 +162,7 @@ impl Theme {
 /// branco. O branco no tema claro e o preto no escuro ficam um tom afastados do fundo,
 /// para a seleção e os interruptores ligados continuarem à vista.
 pub const ACCENTS: &[(&str, &str, [u8; 3], [u8; 3])] = &[
-    ("blue", "Blue", [10, 110, 235], [30, 125, 245]),
+    ("blue", "Default (Blue)", [10, 110, 235], [30, 125, 245]),
     ("purple", "Purple", [135, 70, 200], [160, 95, 225]),
     ("pink", "Pink", [215, 50, 125], [235, 80, 150]),
     ("red", "Red", [215, 45, 45], [235, 75, 70]),
@@ -178,21 +181,31 @@ pub fn on_color(c: Rgba) -> Rgba {
     if luma > 165.0 { [24, 24, 28, 255] } else { [255, 255, 255, 255] }
 }
 
-/// Vidro tingido pela cor de destaque (`[appearance] tint`, ligado por padrão;
+/// Interface na cor de destaque (`[appearance] tint`, ligado por padrão;
 /// Configurações → Aparência). Só no mide: fora dele, o tema segue o sistema.
 pub fn tint_enabled() -> bool {
     crate::control_client::on_mide() && !matches!(crate::settings_file::cached("appearance", "tint"), Some(crate::settings_file::Value::Bool(false)))
 }
 
-/// Cor e força do toque de cor no vidro e nas transparências (barra, dock, menus,
-/// barras laterais), ou `None` com o tingido desligado. Mais forte no escuro, onde o
-/// mesmo tanto de cor aparece menos.
-pub fn glass_tint(dark: bool) -> Option<([u8; 3], f32)> {
-    if !tint_enabled() {
+/// Cores de destaque que não pintam a interface: a padrão (azul, o visual de sempre) e
+/// as neutras.
+const NEUTRAL_ACCENTS: &[&str] = &["blue", "graphite", "white", "black"];
+
+/// Cor que pinta a interface (fundos das janelas, barras laterais, menus, vidro), ou
+/// `None` com a cor padrão, uma neutra ou o interruptor desligado.
+pub fn ui_tint(dark: bool) -> Option<[u8; 3]> {
+    if !tint_enabled() || NEUTRAL_ACCENTS.contains(&accent_key().as_str()) {
         return None;
     }
     let [r, g, b, _] = system_accent(dark);
-    Some(([r, g, b], if dark { 0.14 } else { 0.10 }))
+    Some([r, g, b])
+}
+
+/// Cor e força do toque de cor no vidro (dock, menus, barra, barras laterais), quando
+/// a interface é pintada ([`ui_tint`]). Mais forte no escuro, onde o mesmo tanto de
+/// cor aparece menos.
+pub fn glass_tint(dark: bool) -> Option<([u8; 3], f32)> {
+    ui_tint(dark).map(|c| (c, if dark { 0.14 } else { 0.10 }))
 }
 
 /// `base` com `amount` (0 a 1) de `over`, guardando a transparência de `base`.
