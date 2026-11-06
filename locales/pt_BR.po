@@ -586,3 +586,9 @@ msgstr "Sino"
 
 msgid "Pop"
 msgstr "Pop"
+
+msgid "AM"
+msgstr "AM"
+
+msgid "PM"
+msgstr "PM"

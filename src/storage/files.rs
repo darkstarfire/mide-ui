@@ -82,7 +82,8 @@ pub fn size_text(bytes: u64) -> String {
         value /= 1000.0;
         unit += 1;
     }
-    format!("{:.1} {}", value, UNITS[unit]).replace('.', &trc("decimal separator", "."))
+    // Separador decimal da região (Idioma e região), não do idioma da interface.
+    format!("{} {}", crate::kit::region::region().number(value, 1), UNITS[unit])
 }
 
 /// Data de modificação: "hoje, 14:30", "ontem, 09:05", "12 de out." ou "12 de out. de 2024".
@@ -106,8 +107,8 @@ pub fn date_text(modified: SystemTime, now: SystemTime) -> String {
     let today: DateTime<Local> = now.into();
     let days = today.date_naive().signed_duration_since(when.date_naive()).num_days();
     match days {
-        0 => crate::tr!("Today, {time}", time = when.format("%H:%M")),
-        1 => crate::tr!("Yesterday, {time}", time = when.format("%H:%M")),
+        0 => crate::tr!("Today, {time}", time = crate::kit::region::time_of(&when, false)),
+        1 => crate::tr!("Yesterday, {time}", time = crate::kit::region::time_of(&when, false)),
         _ if when.year() == today.year() => crate::tr!("{month} {day}", month = month(when.month0()), day = when.day()),
         _ => crate::tr!("{month} {day}, {year}", month = month(when.month0()), day = when.day(), year = when.year()),
     }

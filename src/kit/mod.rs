@@ -37,6 +37,7 @@ mod input;
 mod media;
 pub mod menubar;
 pub mod picker;
+pub mod region;
 pub mod screens;
 pub mod textarea;
 pub mod textedit;
