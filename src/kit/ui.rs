@@ -1580,6 +1580,15 @@ impl<'a> Ui<'a> {
         self.ctx.maximized
     }
 
+    /// Desenha `body` com o tema ajustado por `adjust` e volta ao tema de antes, como o
+    /// "Tamanho do texto" do Finder (só a área do conteúdo muda).
+    pub fn with_theme(&mut self, adjust: impl FnOnce(&mut Theme), body: impl FnOnce(&mut Ui)) {
+        let saved = self.ctx.theme.clone();
+        adjust(&mut self.ctx.theme);
+        body(self);
+        self.ctx.theme = saved;
+    }
+
     /// A janela está em tela cheia.
     pub fn fullscreen(&self) -> bool {
         self.ctx.fullscreen
