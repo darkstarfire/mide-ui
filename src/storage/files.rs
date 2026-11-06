@@ -912,7 +912,51 @@ pub fn toggle_tag(path: &Path, tag: usize) -> std::io::Result<()> {
     } else {
         names.push(key.to_string());
     }
-    set_xattr(path, TAGS_XATTR, &names.join(","))
+    set_xattr(path, TAGS_XATTR, &names.join(","))?;
+    remember_tagged(path, !names.is_empty());
+    Ok(())
+}
+
+/// Índice dos itens com etiqueta (`~/.local/state/mide/tagged`, um caminho por linha):
+/// a seção Etiquetas da barra lateral do Arquivos lista os itens de uma cor sem varrer
+/// a pasta pessoal inteira (as etiquetas ficam em atributos de cada arquivo).
+fn tagged_index() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("mide/tagged"))
+}
+
+/// Põe ou tira o item do índice das etiquetas.
+fn remember_tagged(path: &Path, tagged: bool) {
+    let Some(index) = tagged_index() else {
+        return;
+    };
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut lines: Vec<String> = fs::read_to_string(&index).unwrap_or_default().lines().map(str::to_string).collect();
+    let key = path.to_string_lossy().into_owned();
+    lines.retain(|l| *l != key);
+    if tagged {
+        lines.push(key);
+    }
+    if let Some(dir) = index.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(&index, lines.join("\n") + "\n");
+}
+
+/// Itens com a etiqueta `tag` (índice em `TAGS`), do índice: só os que ainda existem e
+/// ainda têm a etiqueta (renomeados ou apagados fora do mide somem da lista).
+pub fn tagged_with(tag: usize) -> Vec<std::path::PathBuf> {
+    let Some(index) = tagged_index() else {
+        return Vec::new();
+    };
+    fs::read_to_string(index)
+        .unwrap_or_default()
+        .lines()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.exists() && tags_of(p).contains(&tag))
+        .collect()
 }
 
 /// Comentário do item (Obter informações → Comentários).
