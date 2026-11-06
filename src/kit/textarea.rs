@@ -37,6 +37,10 @@ pub struct TextDoc {
     pub modified: bool,
     /// Aumenta a cada mudança do texto (para saber se mudou num quadro).
     pub version: u64,
+    /// Cursores além do principal (vários cursores, como no VS Code e no Zed), cada um
+    /// com a própria seleção. Digitar, apagar, as setas, colar e copiar valem para
+    /// todos; Esc (no app) volta a um só.
+    pub extra: Vec<Edit>,
 }
 
 impl TextDoc {
@@ -69,6 +73,7 @@ impl TextDoc {
         };
         self.redo.push((std::mem::replace(&mut self.text, text), self.edit));
         self.edit = edit;
+        self.extra.clear();
         self.last_change = None;
         self.modified = true;
         self.version += 1;
@@ -92,6 +97,7 @@ impl TextDoc {
         };
         self.undo.push((std::mem::replace(&mut self.text, text), self.edit));
         self.edit = edit;
+        self.extra.clear();
         self.last_change = None;
         self.modified = true;
         self.version += 1;
@@ -103,24 +109,183 @@ impl TextDoc {
         line_starts(&self.text)
     }
 
-    /// Escreve no cursor (no lugar da seleção), registrando no histórico.
+    /// Escreve no cursor (no lugar da seleção), registrando no histórico. Com vários
+    /// cursores, em todos.
     pub fn type_text(&mut self, s: &str) {
         if s.is_empty() {
             return;
         }
         self.before_change(if s.chars().any(char::is_whitespace) { Change::Other } else { Change::Typing });
-        self.edit.insert(&mut self.text, s);
+        self.each_cursor(|e, t| e.insert(t, s));
         self.goal_x = None;
     }
 
-    /// Nova linha com o mesmo recuo da linha atual.
+    /// Nova linha com o mesmo recuo da linha de cada cursor.
     pub fn newline(&mut self) {
-        let starts = self.line_starts();
-        let line = line_of(&starts, self.edit.selection().map_or(self.edit.cursor, |(a, _)| a));
-        let indent: String = self.text[starts[line]..].chars().take_while(|c| *c == ' ' || *c == '\t').collect();
         self.before_change(Change::Other);
-        self.edit.insert(&mut self.text, &format!("\n{indent}"));
+        self.each_cursor(|e, t| {
+            let at = e.selection().map_or(e.cursor, |(a, _)| a);
+            let start = t[..at].rfind('\n').map_or(0, |i| i + 1);
+            let indent: String = t[start..].chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+            e.insert(t, &format!("\n{indent}"));
+        });
         self.goal_x = None;
+    }
+
+    /// Há mais de um cursor.
+    pub fn has_extra(&self) -> bool {
+        !self.extra.is_empty()
+    }
+
+    /// Volta a um cursor só (o principal). Devolve se havia outros.
+    pub fn collapse_cursors(&mut self) -> bool {
+        let had = !self.extra.is_empty();
+        self.extra.clear();
+        had
+    }
+
+    /// Todos os cursores, o principal primeiro.
+    pub fn cursors(&self) -> Vec<Edit> {
+        std::iter::once(self.edit).chain(self.extra.iter().copied()).collect()
+    }
+
+    /// Aplica `f` em cada cursor, do último para o primeiro no texto: quando um muda o
+    /// tamanho do texto, os que vêm depois dele (já feitos) andam junto. No fim, cursores
+    /// que caíram no mesmo lugar viram um só. Não registra no histórico (quem chama
+    /// registra antes, para tudo virar um passo só do desfazer).
+    pub fn each_cursor(&mut self, mut f: impl FnMut(&mut Edit, &mut String)) {
+        let mut all = self.cursors();
+        let start = |e: &Edit| e.selection().map_or(e.cursor, |(a, _)| a);
+        let mut order: Vec<usize> = (0..all.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(start(&all[i])));
+        let mut done: Vec<usize> = Vec::new();
+        for i in order {
+            let len = self.text.len();
+            let at = start(&all[i]);
+            f(&mut all[i], &mut self.text);
+            let delta = self.text.len() as isize - len as isize;
+            if delta != 0 {
+                let moved = |p: usize| (p as isize + delta).max(0) as usize;
+                for &j in &done {
+                    let e = &mut all[j];
+                    if start(e) >= at {
+                        e.cursor = moved(e.cursor);
+                        e.anchor = e.anchor.map(moved);
+                    }
+                }
+            }
+            done.push(i);
+        }
+        for e in &mut all {
+            e.clamp(&self.text);
+        }
+        self.edit = all[0];
+        let mut extra: Vec<Edit> = Vec::new();
+        for e in all.into_iter().skip(1) {
+            if e.cursor != self.edit.cursor && !extra.iter().any(|x| x.cursor == e.cursor) {
+                extra.push(e);
+            }
+        }
+        self.extra = extra;
+    }
+
+    /// Cola em todos os cursores. Se o texto tem tantas linhas quanto os cursores (o
+    /// que foi copiado de vários cursores), cada cursor recebe a sua, como no VS Code.
+    pub fn paste(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n");
+        self.before_change(Change::Other);
+        let lines: Vec<&str> = text.split('\n').collect();
+        let n = 1 + self.extra.len();
+        if n > 1 && lines.len() == n {
+            // Na ordem do texto: o primeiro cursor recebe a primeira linha.
+            let mut by_pos: Vec<usize> = self.cursors().iter().map(|e| e.selection().map_or(e.cursor, |(a, _)| a)).collect();
+            by_pos.sort();
+            let pieces: Vec<(usize, String)> = by_pos.into_iter().zip(lines.iter().map(|l| l.to_string())).collect();
+            self.each_cursor(|e, t| {
+                let at = e.selection().map_or(e.cursor, |(a, _)| a);
+                let piece = pieces.iter().find(|(p, _)| *p == at).map(|(_, s)| s.clone()).unwrap_or_default();
+                e.insert(t, &piece);
+            });
+        } else {
+            self.each_cursor(|e, t| e.insert(t, &text));
+        }
+        self.goal_x = None;
+    }
+
+    /// O texto escolhido em todos os cursores (um por linha, na ordem do texto), para
+    /// copiar.
+    pub fn selected_texts(&self) -> Option<String> {
+        let mut parts: Vec<(usize, &str)> = self.cursors().iter().filter_map(|e| e.selection().map(|(a, b)| (a, &self.text[a..b]))).collect();
+        parts.sort_by_key(|(a, _)| *a);
+        (!parts.is_empty()).then(|| parts.into_iter().map(|(_, s)| s).collect::<Vec<_>>().join("\n"))
+    }
+
+    /// Põe (ou tira) um cursor em `at` (Alt+clique).
+    pub fn toggle_cursor(&mut self, at: usize) {
+        if let Some(i) = self.extra.iter().position(|e| e.cursor == at) {
+            self.extra.remove(i);
+        } else if self.edit.cursor != at {
+            self.extra.push(Edit { cursor: at, anchor: None });
+        }
+    }
+
+    /// Escolhe a próxima ocorrência do texto escolhido com mais um cursor (Ctrl+D):
+    /// sem nada escolhido, escolhe a palavra do cursor. Devolve se escolheu algo.
+    pub fn add_next_occurrence(&mut self) -> bool {
+        let Some((a, b)) = self.edit.selection() else {
+            let at = self.edit.cursor;
+            self.edit.select_word(&self.text, at);
+            return self.edit.selection().is_some();
+        };
+        let needle = self.text[a..b].to_string();
+        // Depois do último cursor; no fim do texto, volta ao começo.
+        let after = self.cursors().iter().map(|e| e.selection().map_or(e.cursor, |(_, z)| z)).max().unwrap_or(b);
+        let taken: Vec<usize> = self.cursors().iter().filter_map(|e| e.selection().map(|(s, _)| s)).collect();
+        let found = self.text[after..].find(&needle).map(|i| after + i).filter(|i| !taken.contains(i)).or_else(|| {
+            self.text.match_indices(&needle).map(|(i, _)| i).find(|i| !taken.contains(i))
+        });
+        match found {
+            Some(i) => {
+                self.extra.push(Edit { cursor: i + needle.len(), anchor: Some(i) });
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Mais um cursor na linha de baixo (ou de cima) do último, na mesma coluna em
+    /// caracteres (Ctrl+Alt+↓ e ↑).
+    pub fn add_cursor_vertical(&mut self, down: bool) {
+        let starts = self.line_starts();
+        let edge = if down { self.cursors().into_iter().max_by_key(|e| e.cursor) } else { self.cursors().into_iter().min_by_key(|e| e.cursor) };
+        let Some(edge) = edge else {
+            return;
+        };
+        let line = line_of(&starts, edge.cursor);
+        let target = if down { line + 1 } else { line.wrapping_sub(1) };
+        if target >= starts.len() {
+            return;
+        }
+        // A coluna do cursor principal (uma linha curta no meio não encurta as próximas).
+        let main_line = line_of(&starts, self.edit.cursor);
+        let col = self.text[starts[main_line]..self.edit.cursor].chars().count();
+        let end = line_end(&self.text, &starts, target);
+        let at = self.text[starts[target]..end].char_indices().nth(col).map_or(end, |(i, _)| starts[target] + i);
+        self.toggle_cursor(at);
+    }
+
+    /// Move cada cursor uma linha para cima ou para baixo, na mesma coluna em
+    /// caracteres (as setas com vários cursores).
+    pub fn move_cursors_vertical(&mut self, down: bool, select: bool) {
+        self.each_cursor(|e, t| {
+            let starts = line_starts(t);
+            let line = line_of(&starts, e.cursor);
+            let to = if down { (line + 1).min(starts.len() - 1) } else { line.saturating_sub(1) };
+            let col = t[starts[line]..e.cursor].chars().count();
+            let end = line_end(t, &starts, to);
+            let at = t[starts[to]..end].char_indices().nth(col).map_or(end, |(i, _)| starts[to] + i);
+            e.move_to(at, select);
+        });
     }
 }
 
@@ -271,6 +436,57 @@ pub fn underline_runs(text: &str, start: usize, end: usize, underlines: &[Range<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn varios_cursores_digitam_e_apagam_juntos() {
+        let mut doc = TextDoc::new("ab\nab\nab".into());
+        doc.edit = Edit { cursor: 2, anchor: None };
+        doc.extra = vec![Edit { cursor: 5, anchor: None }, Edit { cursor: 8, anchor: None }];
+        doc.type_text("X");
+        assert_eq!(doc.text, "abX\nabX\nabX");
+        assert_eq!(doc.cursors().iter().map(|e| e.cursor).collect::<Vec<_>>(), vec![3, 7, 11]);
+        doc.before_change(Change::Deleting);
+        doc.each_cursor(|e, t| {
+            e.backspace(t, false);
+        });
+        assert_eq!(doc.text, "ab\nab\nab");
+        // Desfazer volta o lote num passo só e deixa um cursor.
+        doc.undo();
+        assert_eq!(doc.text, "abX\nabX\nabX");
+        assert!(!doc.has_extra());
+    }
+
+    #[test]
+    fn proxima_ocorrencia_e_copiar_colar() {
+        let mut doc = TextDoc::new("let a = a + a;".into());
+        doc.edit = Edit { cursor: 4, anchor: None };
+        assert!(doc.add_next_occurrence());
+        assert_eq!(doc.edit.selection(), Some((4, 5)));
+        assert!(doc.add_next_occurrence());
+        assert!(doc.add_next_occurrence());
+        assert_eq!(doc.extra.len(), 2);
+        assert_eq!(doc.selected_texts().as_deref(), Some("a\na\na"));
+        doc.type_text("bb");
+        assert_eq!(doc.text, "let bb = bb + bb;");
+        // Colar três linhas em três cursores: uma em cada.
+        doc.paste("1\n2\n3");
+        assert_eq!(doc.text, "let bb1 = bb2 + bb3;");
+    }
+
+    #[test]
+    fn cursor_na_linha_de_baixo() {
+        let mut doc = TextDoc::new("abcd\nxy\nefgh".into());
+        doc.edit = Edit { cursor: 3, anchor: None };
+        doc.add_cursor_vertical(true);
+        // A linha de baixo é mais curta: o cursor vai ao fim dela.
+        assert_eq!(doc.extra[0].cursor, 7);
+        doc.add_cursor_vertical(true);
+        assert_eq!(doc.extra[1].cursor, 11);
+        doc.move_cursors_vertical(false, false);
+        assert_eq!(doc.cursors().iter().map(|e| e.cursor).collect::<Vec<_>>(), vec![3, 2, 7]);
+        assert!(doc.collapse_cursors());
+        assert!(!doc.has_extra());
+    }
 
     #[test]
     fn cores_so_do_trecho_a_vista() {

@@ -4013,7 +4013,13 @@ impl<'a> Ui<'a> {
         if r.hovered && self.ctx.input.pressed && !on_bar {
             self.ctx.memory.focus = Some(id);
             if let Some(at) = pointer_at(self, doc, &starts) {
-                doc.edit = Edit { cursor: at, anchor: Some(at) };
+                if self.ctx.input.alt {
+                    // Alt+clique: mais um cursor ali (ou tira o que já estava).
+                    doc.toggle_cursor(at);
+                } else {
+                    doc.collapse_cursors();
+                    doc.edit = Edit { cursor: at, anchor: Some(at) };
+                }
                 doc.goal_x = None;
             }
             self.ctx.repaint = true;
@@ -4028,7 +4034,7 @@ impl<'a> Ui<'a> {
             self.ctx.text_input = Some((rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3));
             doc.edit.clamp(&doc.text);
             let before = (doc.edit, doc.version);
-            if self.ctx.input.down && !self.ctx.input.pressed && self.ctx.memory.active == Some(id) {
+            if self.ctx.input.down && !self.ctx.input.pressed && self.ctx.memory.active == Some(id) && !self.ctx.input.alt {
                 if let Some(at) = pointer_at(self, doc, &starts) {
                     doc.edit.move_to(at, true);
                     moved = true;
@@ -4041,11 +4047,40 @@ impl<'a> Ui<'a> {
             let typed = std::mem::take(&mut self.ctx.input.text);
             doc.type_text(&typed);
             if let Some(pasted) = self.ctx.input.paste.take() {
-                doc.before_change(Change::Other);
-                doc.edit.insert(&mut doc.text, &pasted.replace("\r\n", "\n"));
+                doc.paste(&pasted);
                 moved = true;
             }
             for (key, ctrl, shift) in self.ctx.input.key_events() {
+                // Vários cursores: a tecla vale para todos (colunas em caracteres).
+                if doc.has_extra() {
+                    match key {
+                        Key::Enter => doc.newline(),
+                        Key::Tab => doc.type_text(look.indent),
+                        Key::Backspace | Key::Delete => {
+                            doc.before_change(Change::Deleting);
+                            doc.each_cursor(|e, t| {
+                                if key == Key::Backspace {
+                                    e.backspace(t, ctrl);
+                                } else {
+                                    e.delete(t, ctrl);
+                                }
+                            });
+                        }
+                        Key::Left => doc.each_cursor(|e, t| e.left(t, ctrl, shift)),
+                        Key::Right => doc.each_cursor(|e, t| e.right(t, ctrl, shift)),
+                        Key::Up => doc.move_cursors_vertical(false, shift),
+                        Key::Down => doc.move_cursors_vertical(true, shift),
+                        Key::Home | Key::End => doc.each_cursor(|e, t| {
+                            let start = t[..e.cursor].rfind('\n').map_or(0, |i| i + 1);
+                            let end = t[e.cursor..].find('\n').map_or(t.len(), |i| e.cursor + i);
+                            e.move_to(if key == Key::Home { start } else { end }, shift);
+                        }),
+                        _ => continue,
+                    }
+                    doc.goal_x = None;
+                    moved = true;
+                    continue;
+                }
                 starts = doc.line_starts();
                 let line = line_of(&starts, doc.edit.cursor);
                 // Coluna em pixels do cursor (para subir e descer mantendo a coluna).
@@ -4099,12 +4134,17 @@ impl<'a> Ui<'a> {
             for (i, shortcut) in std::mem::take(&mut self.ctx.input.shortcuts).into_iter().enumerate() {
                 let shift = shifts.get(i).copied().unwrap_or(self.ctx.input.shift);
                 match shortcut.as_str() {
-                    "a" => doc.edit = Edit::all(&doc.text),
-                    "c" => self.ctx.clipboard_out = doc.edit.selected(&doc.text).map(str::to_string),
+                    "a" => {
+                        doc.collapse_cursors();
+                        doc.edit = Edit::all(&doc.text);
+                    }
+                    "c" => self.ctx.clipboard_out = doc.selected_texts(),
                     "x" => {
-                        if let Some(cut) = doc.edit.selected(&doc.text).map(str::to_string) {
+                        if let Some(cut) = doc.selected_texts() {
                             doc.before_change(Change::Other);
-                            doc.edit.delete_selection(&mut doc.text);
+                            doc.each_cursor(|e, t| {
+                                e.delete_selection(t);
+                            });
                             self.ctx.clipboard_out = Some(cut);
                         }
                     }
@@ -4190,6 +4230,18 @@ impl<'a> Ui<'a> {
         let (w, h) = (clip_w.ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
         let k = crate::ui::draw::scale();
         let selection = doc.edit.selection();
+        // Cursores extras: as seleções e, sem seleção, a posição (linha e x) do traço.
+        let extra_sel: Vec<(usize, usize)> = doc.extra.iter().filter_map(|e| e.selection()).collect();
+        let extra_carets: Vec<(usize, f32)> = doc
+            .extra
+            .iter()
+            .filter(|e| e.selection().is_none())
+            .map(|e| {
+                let line = line_of(&starts, e.cursor.min(doc.text.len()));
+                let at = e.cursor.min(doc.text.len());
+                (line, width(self, &doc.text[starts[line]..at]) + shift(starts[line], at, false))
+            })
+            .collect();
         // Só as cores e os sublinhados das linhas à vista (num arquivo grande, percorrer
         // todos a cada linha desenhada custava milissegundos por quadro).
         let shown = if first < last { (starts[first], line_end(&doc.text, &starts, last - 1)) } else { (0, 0) };
@@ -4203,6 +4255,7 @@ impl<'a> Ui<'a> {
             doc.text[shown.0..shown.1].hash(&mut hs);
             (first, last, w, h, k.to_bits(), size.to_bits(), sans, doc.scroll.to_bits(), doc.scroll_x.to_bits()).hash(&mut hs);
             (selection, cursor_line, cursor_x.to_bits(), focused, look.current_line).hash(&mut hs);
+            (&extra_sel, extra_carets.iter().map(|(l, x)| (*l, x.to_bits())).collect::<Vec<_>>()).hash(&mut hs);
             (pal.current_line, text_color, t.accent, t.text_secondary, t.danger).hash(&mut hs);
             (colors, underlines, &deco.trailing, deco.trailing_right).hash(&mut hs);
             for (at, iw, label) in &inlays {
@@ -4243,6 +4296,12 @@ impl<'a> Ui<'a> {
                     let trailing = has_trailing(line);
                     if look.current_line && focused && line == cursor_line && selection.is_none() {
                         fill_rounded(&mut clip, 0.0, y, w as f32, line_h, 0.0, color(pal.current_line.unwrap_or([ar, ag, ab, 14])));
+                    }
+                    for &(a, b) in extra_sel.iter().filter(|(a, b)| *a <= end && *b >= start) {
+                        let (sa, sb) = (a.max(start), b.min(end));
+                        let xa = width(self, &doc.text[start..sa]) + shift(start, sa, true);
+                        let xb = width(self, &doc.text[start..sb]) + shift(start, sb, false);
+                        fill_rounded(&mut clip, x0 + xa, y, xb - xa, line_h, 0.0, color([ar, ag, ab, 70]));
                     }
                     if let Some((a, b)) = selection.filter(|(a, b)| *a <= end && *b >= start && !(a == b)) {
                         let (sa, sb) = (a.max(start), b.min(end));
@@ -4322,6 +4381,12 @@ impl<'a> Ui<'a> {
                 if focused && selection.is_none() {
                     let y = pad + cursor_line as f32 * line_h - doc.scroll;
                     fill_rounded(&mut clip, cursor_x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(text_color));
+                }
+                if focused {
+                    for &(line, x) in &extra_carets {
+                        let y = pad + line as f32 * line_h - doc.scroll;
+                        fill_rounded(&mut clip, x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(text_color));
+                    }
                 }
                 clip
             }
