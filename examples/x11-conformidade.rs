@@ -23,6 +23,17 @@ fn main() {
         }
     };
 
+    // Área de trabalho em tela inteira: tem que ficar por baixo das outras camadas.
+    let desktop = session
+        .layer(&LayerSpec {
+            app_id: "conf-desktop".into(),
+            kind: Kind::Desktop,
+            rect: Rect { x: 0, y: 0, w: 1366, h: 768 },
+            strut: None,
+            keyboard: false,
+        })
+        .expect("área de trabalho");
+
     // Dock com borda reservada embaixo (68 px, largura da tela).
     let dock = session
         .layer(&LayerSpec {
@@ -55,7 +66,7 @@ fn main() {
         .expect("popup");
 
     marca("pronto", 0);
-    println!("IDS dock={} notif={} popup={}", dock.window(), notif.window(), popup.window());
+    println!("IDS dock={} notif={} popup={} desktop={}", dock.window(), notif.window(), popup.window(), desktop.window());
     let _ = std::io::stdout().flush();
     sleep(Duration::from_secs(3));
 
@@ -93,4 +104,5 @@ fn main() {
     marca("fim", 0);
     drop(dock);
     drop(notif);
+    drop(desktop);
 }

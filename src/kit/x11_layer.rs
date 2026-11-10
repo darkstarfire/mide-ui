@@ -69,6 +69,8 @@ pub enum Edge {
 pub enum Kind {
     Dock,
     Notification,
+    /// Área de trabalho: fica no fundo da pilha (`_NET_WM_WINDOW_TYPE_DESKTOP`).
+    Desktop,
 }
 
 /// O que criar: nome do app (`WM_CLASS`), tipo, posição e tamanho, reserva de borda e
@@ -107,6 +109,7 @@ struct Atoms {
     net_wm_window_type: xproto::Atom,
     net_wm_window_type_dock: xproto::Atom,
     net_wm_window_type_notification: xproto::Atom,
+    net_wm_window_type_desktop: xproto::Atom,
     net_wm_strut_partial: xproto::Atom,
     net_wm_strut: xproto::Atom,
     net_wm_name: xproto::Atom,
@@ -171,6 +174,7 @@ impl Session {
             net_wm_window_type: intern(&conn, "_NET_WM_WINDOW_TYPE")?,
             net_wm_window_type_dock: intern(&conn, "_NET_WM_WINDOW_TYPE_DOCK")?,
             net_wm_window_type_notification: intern(&conn, "_NET_WM_WINDOW_TYPE_NOTIFICATION")?,
+            net_wm_window_type_desktop: intern(&conn, "_NET_WM_WINDOW_TYPE_DESKTOP")?,
             net_wm_strut_partial: intern(&conn, "_NET_WM_STRUT_PARTIAL")?,
             net_wm_strut: intern(&conn, "_NET_WM_STRUT")?,
             net_wm_name: intern(&conn, "_NET_WM_NAME")?,
@@ -275,6 +279,7 @@ impl Session {
         let wtype = match spec.kind {
             Kind::Dock => i.atoms.net_wm_window_type_dock,
             Kind::Notification => i.atoms.net_wm_window_type_notification,
+            Kind::Desktop => i.atoms.net_wm_window_type_desktop,
         };
         conn.change_property32(xproto::PropMode::REPLACE, window, i.atoms.net_wm_window_type, xproto::AtomEnum::ATOM, &[wtype]).map_err(err)?;
         // WM_HINTS: sem o `input`, o gerenciador não dá o foco do teclado à camada.
@@ -292,6 +297,10 @@ impl Session {
         };
         layer.write_strut()?;
         conn.map_window(window).map_err(err)?;
+        if spec.kind == Kind::Desktop {
+            // A área de trabalho fica por baixo de tudo, mesmo sem gerenciador de janelas.
+            conn.configure_window(window, &xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::BELOW)).map_err(err)?;
+        }
         conn.flush().map_err(err)?;
         Ok(layer)
     }

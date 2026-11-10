@@ -145,6 +145,9 @@ pub struct Window {
     /// Borda reservada na tela (`Window::exclusive_zone`): a janela fica fora da área
     /// útil, como a barra. No X11, vira a dica `_NET_WM_STRUT_PARTIAL`.
     pub exclusive: Option<(super::Edge, u32)>,
+    /// Fundo da camada de área de trabalho no X11 (`Window::backdrop`): a função recebe
+    /// o tamanho da tela e devolve o fundo, que fica por baixo do que o app desenha.
+    pub backdrop: Option<fn(u32, u32) -> Option<Pixmap>>,
 }
 
 impl Window {
@@ -170,7 +173,15 @@ impl Window {
             fixed: false,
             glass: false,
             exclusive: None,
+            backdrop: None,
         }
+    }
+
+    /// Fundo da área de trabalho no X11 (sem GPU): `f(largura, altura)` devolve o
+    /// `Pixmap` que aparece atrás do conteúdo do app (papel de parede).
+    pub fn backdrop(mut self, f: fn(u32, u32) -> Option<Pixmap>) -> Self {
+        self.backdrop = Some(f);
+        self
     }
 
     /// Reserva `size` pixels da borda `edge` da tela (como a barra superior ou a dock).

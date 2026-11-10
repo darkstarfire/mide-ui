@@ -66,6 +66,7 @@ IDS=$(grep '^IDS ' "$OUT/saida.txt")
 DOCK=$(echo "$IDS" | sed -n 's/.*dock=\([0-9]*\).*/\1/p')
 NOTIF=$(echo "$IDS" | sed -n 's/.*notif=\([0-9]*\).*/\1/p')
 POPUP=$(echo "$IDS" | sed -n 's/.*popup=\([0-9]*\).*/\1/p')
+DESK=$(echo "$IDS" | sed -n 's/.*desktop=\([0-9]*\).*/\1/p')
 hex() { printf '0x%x' "$1"; }
 D=$(hex "$DOCK"); N=$(hex "$NOTIF"); P=$(hex "$POPUP")
 
@@ -80,6 +81,15 @@ check "dock sem override-redirect (o gerenciador vê a reserva)" bash -c "xwinin
 check "notificação com override-redirect (fora do gerenciador)" bash -c "xwininfo -id $N | grep -q 'Override Redirect State: yes'"
 check "janela em profundidade 24 sem MIDE_X11_ARGB" bash -c "xwininfo -id $D | grep -q 'Depth: 24'"
 check "dock mapeada (IsViewable)" bash -c "xwininfo -id $D | grep -q 'Map State: IsViewable'"
+# Área de trabalho (EWMH _NET_WM_WINDOW_TYPE_DESKTOP): tela inteira e por baixo de tudo.
+DK=$(hex "$DESK")
+check "tipo da área de trabalho é _NET_WM_WINDOW_TYPE_DESKTOP (EWMH)" bash -c "xprop -id $DK _NET_WM_WINDOW_TYPE | grep -q _NET_WM_WINDOW_TYPE_DESKTOP"
+check "área de trabalho cobre a tela (1366x768 em 0,0)" bash -c "xwininfo -id $DK | grep -q 'Width: 1366' && xwininfo -id $DK | grep -q 'Height: 768' && xwininfo -id $DK | grep -q 'Absolute upper-left X:  0'"
+ORDEM=$(xwininfo -root -children | awk '{print $1}')
+POS_DESK=$(echo "$ORDEM" | grep -n "^$DK$" | cut -d: -f1)
+POS_DOCK=$(echo "$ORDEM" | grep -n "^$D$" | cut -d: -f1)
+# xwininfo lista do topo para o fundo: a área de trabalho por baixo vem depois da dock.
+check "área de trabalho por baixo da dock na pilha" test "$POS_DESK" -gt "$POS_DOCK"
 
 echo "== mover"
 if esperar movido; then

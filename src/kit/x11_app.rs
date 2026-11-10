@@ -24,16 +24,19 @@ const PRESSED_TICK: Duration = Duration::from_millis(16);
 
 /// Roda `app` na janela `window` do X11.
 pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
-    // A área de trabalho e a tela de bloqueio são camadas de tela inteira (fundo do
-    // mide, vidro, papel de parede). No X11 não há isso ainda: uma camada opaca em tela
-    // inteira cobriria o desktop e as barras, então o app recusa em vez de aparecer.
-    if window.desktop || window.lock {
-        return Err("área de trabalho e tela de bloqueio ainda não existem no X11".into());
+    // A tela de bloqueio é uma camada de tela inteira com teclado preso: ainda não existe
+    // no X11, então o app recusa em vez de aparecer por cima de tudo.
+    if window.lock {
+        return Err("tela de bloqueio ainda não existe no X11".into());
     }
     let session = Session::connect()?;
     let (sw, sh) = session.screen_size();
     let (w, h) = window.size;
-    let rect = if window.corner {
+    // Área de trabalho: tela inteira, no fundo da pilha, com o papel de parede por baixo.
+    let base = if window.desktop { window.backdrop.and_then(|f| f(sw, sh)) } else { None };
+    let rect = if window.desktop {
+        Rect { x: 0, y: 0, w: sw, h: sh }
+    } else if window.corner {
         Rect { x: sw as i32 - w as i32, y: sh as i32 - h as i32, w, h }
     } else if let Some((Edge::Bottom, _)) = window.exclusive {
         // Reserva a borda de baixo: ocupa a largura inteira.
@@ -43,9 +46,9 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
     };
     let spec = LayerSpec {
         app_id: window.app_id.clone(),
-        kind: Kind::Dock,
+        kind: if window.desktop { Kind::Desktop } else { Kind::Dock },
         rect,
-        strut: window.exclusive,
+        strut: if window.desktop { None } else { window.exclusive },
         keyboard: false,
     };
     let mut layer = session.layer(&spec)?;
@@ -94,7 +97,7 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
         if needs_frame || pressed || last_frame.elapsed() >= IDLE_TICK {
             needs_frame = false;
             last_frame = Instant::now();
-            draw(&mut app, &mut ctx, &mut layer, rect)?;
+            draw(&mut app, &mut ctx, &mut layer, rect, base.as_ref())?;
             if std::mem::take(&mut ctx.close_requested) && app.close_requested() {
                 break;
             }
@@ -108,9 +111,13 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
 }
 
 /// Um quadro: a interface do app (`view`) desenhada num `Pixmap` e enviada à camada.
-fn draw(app: &mut impl App, ctx: &mut Ctx, layer: &mut Layer, rect: Rect) -> Result<(), Box<dyn Error>> {
+fn draw(app: &mut impl App, ctx: &mut Ctx, layer: &mut Layer, rect: Rect, base: Option<&Pixmap>) -> Result<(), Box<dyn Error>> {
     crate::ui::draw::set_scale(1.0);
-    let mut canvas = Pixmap::new(rect.w.max(1), rect.h.max(1)).ok_or("quadro de tamanho zero")?;
+    // O fundo (papel de parede) fica por baixo; sem ele, o quadro começa transparente.
+    let mut canvas = match base {
+        Some(b) => b.clone(),
+        None => Pixmap::new(rect.w.max(1), rect.h.max(1)).ok_or("quadro de tamanho zero")?,
+    };
     ctx.begin_frame();
     {
         let mut ui = Ui::root(&mut canvas, ctx);
