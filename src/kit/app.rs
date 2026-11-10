@@ -333,6 +333,10 @@ const TICK: std::time::Duration = std::time::Duration::from_millis(40);
 const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>> {
+    // Sem Wayland, mas com X11 (sessão X11 ou o mide com MIDE_BACKEND=x11): laço X11.
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_some() {
+        return super::x11_app::run(window, app);
+    }
     let conn = Connection::connect_to_env()?;
     let (globals, event_queue) = registry_queue_init(&conn)?;
     let qh = event_queue.handle();

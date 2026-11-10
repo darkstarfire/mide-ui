@@ -43,6 +43,7 @@ pub mod textarea;
 pub mod textedit;
 mod theme;
 mod ui;
+mod x11_app;
 pub mod x11_layer;
 
 pub use app::{run, App, Waker, Window};
