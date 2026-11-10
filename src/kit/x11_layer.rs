@@ -100,7 +100,9 @@ pub enum PointerKind {
 pub enum Input {
     Pointer { window: u32, x: f64, y: f64, kind: PointerKind },
     Expose { window: u32 },
-    Key { window: u32, keysym: u32, pressed: bool },
+    /// Tecla. `keysym` já vem na coluna certa (com Shift ou Caps Lock, para letras);
+    /// `shift` diz se o Shift estava segurado (o modificador que o kit precisa).
+    Key { window: u32, keysym: u32, pressed: bool, shift: bool },
     /// A conexão com o servidor acabou.
     Closed,
 }
@@ -318,18 +320,36 @@ impl Session {
                 Event::EnterNotify(e) => out.push(pointer(e.event, e.event_x, e.event_y, PointerKind::Enter)),
                 Event::LeaveNotify(e) => out.push(pointer(e.event, e.event_x, e.event_y, PointerKind::Leave)),
                 Event::KeyPress(e) => {
-                    let keysym = self.keysym_of(e.detail, 0)?;
-                    out.push(Input::Key { window: e.event, keysym, pressed: true });
+                    let (keysym, shift) = self.keysym_for(e.detail, u16::from(e.state))?;
+                    out.push(Input::Key { window: e.event, keysym, pressed: true, shift });
                 }
                 Event::KeyRelease(e) => {
-                    let keysym = self.keysym_of(e.detail, 0)?;
-                    out.push(Input::Key { window: e.event, keysym, pressed: false });
+                    let (keysym, shift) = self.keysym_for(e.detail, u16::from(e.state))?;
+                    out.push(Input::Key { window: e.event, keysym, pressed: false, shift });
                 }
                 _ => {}
             }
         }
         i.conn.flush().map_err(err)?;
         Ok(out)
+    }
+
+    /// Símbolo da tecla com os modificadores do momento. Shift (bit 0x1) e Caps Lock
+    /// (0x2, só em letras) trocam para a coluna maiúscula, quando o layout tem uma.
+    fn keysym_for(&self, keycode: u8, state: u16) -> Result<(u32, bool)> {
+        const SHIFT: u16 = 0x1;
+        const LOCK: u16 = 0x2;
+        let base = self.keysym_of(keycode, 0)?;
+        let letter = (0x61..=0x7a).contains(&base) || (0x41..=0x5a).contains(&base);
+        let shift = state & SHIFT != 0;
+        let upper = shift ^ (state & LOCK != 0 && letter);
+        if upper {
+            let up = self.keysym_of(keycode, 1)?;
+            if up != 0 {
+                return Ok((up, shift));
+            }
+        }
+        Ok((base, shift))
     }
 
     /// Símbolo (keysym) de uma tecla do servidor na coluna `col` (0 sem Shift).
@@ -505,6 +525,33 @@ impl Layer {
         }
         i.conn.flush().map_err(err)?;
         Ok(())
+    }
+
+    /// Traz a camada para o topo da pilha (a tela de bloqueio usa isso de tempos em tempos).
+    pub fn raise(&self) {
+        let i = &self.session.inner;
+        let _ = i.conn.configure_window(self.window, &xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE));
+        let _ = i.conn.flush();
+    }
+
+    /// Prende o teclado para esta camada: as teclas vão só para ela. `false` se recusou.
+    pub fn grab_keyboard(&self) -> bool {
+        let i = &self.session.inner;
+        let status = i
+            .conn
+            .grab_keyboard(false, self.window, CURRENT_TIME, xproto::GrabMode::ASYNC, xproto::GrabMode::ASYNC)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| r.status);
+        let _ = i.conn.flush();
+        status == Some(xproto::GrabStatus::SUCCESS)
+    }
+
+    /// Solta o teclado preso por `grab_keyboard`.
+    pub fn ungrab_keyboard(&self) {
+        let i = &self.session.inner;
+        let _ = i.conn.ungrab_keyboard(CURRENT_TIME);
+        let _ = i.conn.flush();
     }
 
     /// Prende o ponteiro para esta camada (menus). `false` se o servidor recusou.

@@ -21,20 +21,18 @@ const WHEEL_STEP: f32 = 40.0;
 const IDLE_TICK: Duration = Duration::from_millis(100);
 /// Com o botão apertado, o toque longo e as animações pedem quadros mais seguidos.
 const PRESSED_TICK: Duration = Duration::from_millis(16);
+/// Com o bloqueio ativo, a janela volta ao topo da pilha de tempos em tempos.
+const RAISE_EVERY: Duration = Duration::from_millis(500);
 
 /// Roda `app` na janela `window` do X11.
 pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
-    // A tela de bloqueio é uma camada de tela inteira com teclado preso: ainda não existe
-    // no X11, então o app recusa em vez de aparecer por cima de tudo.
-    if window.lock {
-        return Err("tela de bloqueio ainda não existe no X11".into());
-    }
     let session = Session::connect()?;
     let (sw, sh) = session.screen_size();
     let (w, h) = window.size;
     // Área de trabalho: tela inteira, no fundo da pilha, com o papel de parede por baixo.
     let base = if window.desktop { window.backdrop.and_then(|f| f(sw, sh)) } else { None };
-    let rect = if window.desktop {
+    // Tela de bloqueio: a tela inteira, por cima de tudo, com teclado e ponteiro presos.
+    let rect = if window.desktop || window.lock {
         Rect { x: 0, y: 0, w: sw, h: sh }
     } else if window.corner {
         Rect { x: sw as i32 - w as i32, y: sh as i32 - h as i32, w, h }
@@ -48,11 +46,18 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
         app_id: window.app_id.clone(),
         kind: if window.desktop { Kind::Desktop } else { Kind::Dock },
         rect,
-        strut: if window.desktop { None } else { window.exclusive },
-        keyboard: false,
+        strut: if window.desktop || window.lock { None } else { window.exclusive },
+        keyboard: window.lock,
     };
     let mut layer = session.layer(&spec)?;
     tracing::info!("janela X11 {} pronta ({}x{})", window.app_id, rect.w, rect.h);
+    if window.lock {
+        layer.raise();
+        if !layer.grab_keyboard() || !layer.grab_pointer() {
+            tracing::warn!("bloqueio X11: o servidor recusou prender o teclado ou o ponteiro");
+        }
+    }
+    let mut last_raise = Instant::now();
 
     let mut ctx = Ctx::new(window.theme.clone());
     let mut pressed = false;
@@ -79,9 +84,10 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
                 Input::Pointer { .. } => {}
                 Input::Expose { window: win } if win == layer.window() => needs_frame = true,
                 Input::Expose { .. } => {}
-                Input::Key { window: win, keysym, pressed: down } if win == layer.window() => {
+                Input::Key { window: win, keysym, pressed: down, shift } if win == layer.window() => {
                     if down {
                         frame_input.key(keysym);
+                        frame_input.shift = Some(shift);
                     }
                 }
                 Input::Key { .. } => {}
@@ -94,10 +100,20 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
             needs_frame = true;
         }
 
+        // Bloqueio: outras janelas que aparecem não podem ficar por cima dele.
+        if window.lock && last_raise.elapsed() >= RAISE_EVERY {
+            layer.raise();
+            last_raise = Instant::now();
+        }
+
         if needs_frame || pressed || last_frame.elapsed() >= IDLE_TICK {
             needs_frame = false;
             last_frame = Instant::now();
             draw(&mut app, &mut ctx, &mut layer, rect, base.as_ref())?;
+            // Senha aceita (ou o app pediu para sair): desbloqueia e termina.
+            if std::mem::take(&mut ctx.unlock_request) {
+                break;
+            }
             if std::mem::take(&mut ctx.close_requested) && app.close_requested() {
                 break;
             }
@@ -105,6 +121,10 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
                 needs_frame = true;
             }
         }
+    }
+    if window.lock {
+        layer.ungrab_keyboard();
+        layer.ungrab_pointer();
     }
     drop(layer);
     Ok(())
@@ -140,6 +160,8 @@ fn draw(app: &mut impl App, ctx: &mut Ctx, layer: &mut Layer, rect: Rect, base: 
 /// Eventos que chegaram desde o último quadro, já com as mudanças do ponteiro.
 #[derive(Default)]
 struct FrameInput {
+    /// Shift da última tecla do quadro (`None` se não houve tecla).
+    shift: Option<bool>,
     pointer: Option<(f32, f32)>,
     pointer_gone: bool,
     pressed: bool,
@@ -213,6 +235,9 @@ impl FrameInput {
     }
 
     fn apply(self, input: &mut super::input::Input) {
+        if let Some(shift) = self.shift {
+            input.shift = shift;
+        }
         if self.pointer_gone {
             input.pointer = None;
         }
