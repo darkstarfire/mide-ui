@@ -142,6 +142,9 @@ pub struct Window {
     pub fixed: bool,
     /// A janela inteira é de vidro (`Window::glass`).
     pub glass: bool,
+    /// Borda reservada na tela (`Window::exclusive_zone`): a janela fica fora da área
+    /// útil, como a barra. No X11, vira a dica `_NET_WM_STRUT_PARTIAL`.
+    pub exclusive: Option<(super::Edge, u32)>,
 }
 
 impl Window {
@@ -166,7 +169,14 @@ impl Window {
             full_size: false,
             fixed: false,
             glass: false,
+            exclusive: None,
         }
+    }
+
+    /// Reserva `size` pixels da borda `edge` da tela (como a barra superior ou a dock).
+    pub fn exclusive_zone(mut self, edge: super::Edge, size: u32) -> Self {
+        self.exclusive = Some((edge, size));
+        self
     }
 
     /// Janela inteira de vidro de painel (Preferências, inspetores): o compositor

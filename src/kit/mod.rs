@@ -43,6 +43,7 @@ pub mod textarea;
 pub mod textedit;
 mod theme;
 mod ui;
+pub mod x11_layer;
 
 pub use app::{run, App, Waker, Window};
 pub use crate::platform::media::{MediaAction, MediaSession};
@@ -51,6 +52,7 @@ pub use i18n::{tr, tr_static, trc, trn};
 pub use chooser::{Choice, ExtraChoice, FileChooser, Filter, Pattern};
 pub use input::{parse_uri_list, Input, Key, KeyPress};
 pub use menubar::{window_menu, MenuGroup, MenuItem};
+pub use x11_layer::Edge;
 pub use picker::{ListPicker, PickGroup, PickItem, Picked};
 pub use screens::Screen;
 pub use textarea::{Decorations, TextDoc};

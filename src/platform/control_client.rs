@@ -7,11 +7,16 @@ use std::{
     time::Duration,
 };
 
-/// Caminho do canal de controle do compositor (`<socket>.ctl`).
+/// Caminho do canal de controle do compositor (`<socket>.ctl`). O nome do socket é o
+/// `WAYLAND_DISPLAY`; no X11 (sem ele) é o `MIDE_SOCKET` que o mide passa aos filhos;
+/// sem nenhum dos dois, o `mide-0` padrão.
 pub fn control_path() -> Option<PathBuf> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
-    let display = std::env::var("WAYLAND_DISPLAY").ok()?;
-    Some(PathBuf::from(runtime).join(format!("{display}.ctl")))
+    let socket = std::env::var("WAYLAND_DISPLAY")
+        .ok()
+        .or_else(|| std::env::var("MIDE_SOCKET").ok())
+        .unwrap_or_else(|| "mide-0".into());
+    Some(PathBuf::from(runtime).join(format!("{socket}.ctl")))
 }
 
 /// Envia um comando ao compositor e devolve as linhas da resposta (sem `end`).

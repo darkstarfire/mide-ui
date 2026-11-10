@@ -23,6 +23,7 @@ tiny-skia = { version = "0.12", features = ["std"] }
 toml_edit = "0.25.17"
 tracing = "0.1.44"
 usvg = { version = "0.45", default-features = false }
+x11rb = { version = "0.13", features = ["shape", "xtest"] }
 zbus = "5"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
