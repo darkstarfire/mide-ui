@@ -24,6 +24,12 @@ const PRESSED_TICK: Duration = Duration::from_millis(16);
 
 /// Roda `app` na janela `window` do X11.
 pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
+    // A área de trabalho e a tela de bloqueio são camadas de tela inteira (fundo do
+    // mide, vidro, papel de parede). No X11 não há isso ainda: uma camada opaca em tela
+    // inteira cobriria o desktop e as barras, então o app recusa em vez de aparecer.
+    if window.desktop || window.lock {
+        return Err("área de trabalho e tela de bloqueio ainda não existem no X11".into());
+    }
     let session = Session::connect()?;
     let (sw, sh) = session.screen_size();
     let (w, h) = window.size;
