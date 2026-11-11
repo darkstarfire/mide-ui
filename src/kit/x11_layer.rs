@@ -167,7 +167,18 @@ impl Session {
                 }
             }
         }
-        let argb = argb_visual.is_some() && std::env::var("MIDE_X11_ARGB").ok().as_deref() == Some("1");
+        // Sem compositor, o alfa é ignorado e a janela ARGB sai escurecida (pixels
+        // pré-multiplicados), então só usamos o visual com alfa quando alguém
+        // reivindica a seleção `_NET_WM_CM_S0` (o compositor da sessão).
+        let wants_argb = std::env::var("MIDE_X11_ARGB").ok().as_deref() == Some("1");
+        let compositing = {
+            let cm = intern(&conn, "_NET_WM_CM_S0")?;
+            conn.get_selection_owner(cm).map_err(err)?.reply().map_err(err)?.owner != 0
+        };
+        let argb = argb_visual.is_some() && wants_argb && compositing;
+        if wants_argb && !argb {
+            eprintln!("mide-ui: MIDE_X11_ARGB=1 ignorado, sem compositor (_NET_WM_CM_S0)");
+        }
 
         let xtest = conn.query_extension(b"XTEST").map_err(err)?.reply().map_err(err)?.present;
         let shape = conn.query_extension(b"SHAPE").map_err(err)?.reply().map_err(err)?.present;
