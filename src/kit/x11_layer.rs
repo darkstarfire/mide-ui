@@ -616,6 +616,14 @@ impl Layer {
         let _ = i.conn.flush();
     }
 
+    /// Dá o foco de teclado a esta camada (clique numa janela de conteúdo). Sem compositor
+    /// que faça isso, o clique não muda o foco sozinho.
+    pub fn focus(&self) {
+        let i = &self.session.inner;
+        let _ = i.conn.set_input_focus(xproto::InputFocus::POINTER_ROOT, self.window, x11rb::CURRENT_TIME);
+        let _ = i.conn.flush();
+    }
+
     /// Prende o teclado para esta camada: as teclas vão só para ela. `false` se recusou.
     pub fn grab_keyboard(&self) -> bool {
         let i = &self.session.inner;

@@ -95,6 +95,10 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
         for event in events {
             match event {
                 Input::Pointer { window: win, x, y, kind } if win == layer.window() => {
+                    // Clique numa janela de conteúdo leva o foco de teclado para ela.
+                    if content_window && matches!(kind, PointerKind::Press(_)) {
+                        layer.focus();
+                    }
                     frame_input.pointer(x, y, kind, &mut pressed);
                 }
                 Input::Pointer { .. } => {}
