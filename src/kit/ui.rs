@@ -843,6 +843,8 @@ pub struct Ctx {
     /// O compositor sabe pôr vidro nesta janela (falso numa janela filha quando ele não
     /// tem `child_glass`: o vidro dela iria para a principal). Sem isso, tudo opaco.
     pub glass_allowed: bool,
+    /// Sem alfa real (X11 sem ARGB): véus translúcidos viram opacos, senão saem pretos.
+    pub no_alpha: bool,
     /// Campo de texto com o foco neste quadro (retângulo na janela, em pontos): a janela
     /// avisa o compositor (`zwp_text_input_v3`) e o teclado na tela aparece.
     pub text_input: Option<(f32, f32, f32, f32)>,
@@ -926,6 +928,7 @@ impl Ctx {
             window_id: None,
             window_glass: false,
             glass_allowed: true,
+            no_alpha: false,
             text_input: None,
         }
     }
@@ -2164,6 +2167,7 @@ impl<'a> Ui<'a> {
             overlay.fill_path(&path, &clear, FillRule::Winding, Transform::identity(), None);
         }
         let veil = t.tinted(if t.dark { [40, 40, 44, 175] } else { [248, 248, 250, 165] });
+        let veil = if self.ctx.no_alpha { [veil[0], veil[1], veil[2], 255] } else { veil };
         fill_rounded(overlay, x, y0, w, h, radius, color(veil));
         outline(overlay, (x, y0, w, h), radius, if t.dark { [255, 255, 255, 30] } else { [0, 0, 0, 16] });
         let mut y = y0 + 5.0;
