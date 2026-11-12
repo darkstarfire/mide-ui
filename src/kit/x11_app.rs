@@ -66,6 +66,10 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
         }
     }
     let mut last_raise = Instant::now();
+    // Janela de conteúdo inteiro: cantos arredondados pelo próprio recorte (sem compositor),
+    // refeitos quando o tamanho muda (tela cheia tira o recorte).
+    let content_window = window.full_size && !window.lock && !window.corner && window.exclusive.is_none() && window.overlay.is_none() && !window.desktop;
+    let mut shaped: Option<(u32, u32)> = None;
 
     let mut ctx = Ctx::new(window.theme.clone());
     // Vidro só com alfa real: sem ARGB, o fundo translúcido sairia cinza.
@@ -122,6 +126,15 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
             needs_frame = false;
             last_frame = Instant::now();
             draw(&mut app, &mut ctx, &mut layer, rect, base.as_ref())?;
+            if content_window {
+                if let Ok((cw, ch)) = layer.size() {
+                    if shaped != Some((cw, ch)) {
+                        let full = cw == sw && ch == sh;
+                        let _ = layer.round_corners(cw, ch, if full { 0.0 } else { 16.0 });
+                        shaped = Some((cw, ch));
+                    }
+                }
+            }
             // Luzes da janela de conteúdo inteiro: o pedido vai ao gerenciador (que faz a ação).
             if let Some(request) = ctx.window_request.take() {
                 tracing::debug!("janela {}: pedido {request:?} enviado ao gerenciador", window.app_id);

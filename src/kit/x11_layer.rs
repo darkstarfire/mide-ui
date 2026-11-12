@@ -331,7 +331,9 @@ impl Session {
         }
         conn.change_property32(xproto::PropMode::REPLACE, window, i.atoms.net_wm_window_type, xproto::AtomEnum::ATOM, &[wtype]).map_err(err)?;
         // WM_HINTS: sem o `input`, o gerenciador não dá o foco do teclado à camada.
-        let input = u32::from(spec.keyboard);
+        // Janela de conteúdo recebe o foco (input = true): sem isso, o gerenciador a trata
+        // como não focável e captura o clique para ativar, sem entregar o botão ao app.
+        let input = u32::from(spec.keyboard || spec.kind == Kind::ContentWindow);
         conn.change_property32(xproto::PropMode::REPLACE, window, i.atoms.wm_hints, i.atoms.wm_hints, &[1, input, 0, 0, 0, 0, 0, 0, 0]).map_err(err)?;
 
         let layer = Layer {
@@ -506,6 +508,31 @@ impl Session {
         i.conn.xtest_fake_input(kind, keycode, CURRENT_TIME, NONE, 0, 0, 0).map_err(err)?;
         Ok(())
     }
+}
+
+/// Retângulos de uma área `w` x `h` com os cantos arredondados de raio `r` (uma linha por
+/// linha de pixel, com o recuo da curva em cada extremidade).
+fn rounded_rects(w: u16, h: u16, r: f32) -> Vec<xproto::Rectangle> {
+    let (wf, hf) = (w as f32, h as f32);
+    let r = r.clamp(0.0, (wf / 2.0).min(hf / 2.0));
+    let mut out = Vec::with_capacity(h as usize);
+    for y in 0..h {
+        let yc = y as f32 + 0.5;
+        let inset = if yc < r {
+            r - (r * r - (r - yc).powi(2)).max(0.0).sqrt()
+        } else if yc > hf - r {
+            let d = yc - (hf - r);
+            r - (r * r - d * d).max(0.0).sqrt()
+        } else {
+            0.0
+        };
+        let inset = inset.round() as u16;
+        if 2 * inset >= w {
+            continue;
+        }
+        out.push(xproto::Rectangle { x: inset as i16, y: y as i16, width: w - 2 * inset, height: 1 });
+    }
+    out
 }
 
 fn intern(conn: &RustConnection, name: &str) -> Result<xproto::Atom> {
@@ -724,6 +751,31 @@ impl Layer {
     }
 
     /// Destrói a janela (e o contexto gráfico e o colormap dela).
+    /// Tamanho atual da janela (o gerenciador pode ter mudado).
+    pub fn size(&self) -> Result<(u32, u32)> {
+        let i = &self.session.inner;
+        let g = i.conn.get_geometry(self.window).map_err(err)?.reply().map_err(err)?;
+        Ok((g.width as u32, g.height as u32))
+    }
+
+    /// Cantos arredondados pelo recorte (SHAPE) da própria janela: sem compositor, a janela
+    /// é retangular e o canto sairia quadrado. `None` (ou tela cheia) tira o recorte.
+    pub fn round_corners(&self, w: u32, h: u32, radius: f32) -> Result<()> {
+        use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+        let i = &self.session.inner;
+        if !i.shape {
+            return Ok(());
+        }
+        if radius <= 0.0 || w == 0 || h == 0 {
+            i.conn.shape_mask(SO::SET, SK::BOUNDING, self.window, 0, 0, x11rb::NONE).map_err(err)?;
+        } else {
+            let rects = rounded_rects(w as u16, h as u16, radius);
+            i.conn.shape_rectangles(SO::SET, SK::BOUNDING, xproto::ClipOrdering::UNSORTED, self.window, 0, 0, &rects).map_err(err)?;
+        }
+        i.conn.flush().map_err(err)?;
+        Ok(())
+    }
+
     /// Manda uma mensagem de cliente ao gerenciador (a raiz, com redirecionamento).
     fn send_wm(&self, kind: xproto::Atom, data: [u32; 5]) -> Result<()> {
         let i = &self.session.inner;
