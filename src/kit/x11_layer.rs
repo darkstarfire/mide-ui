@@ -71,6 +71,10 @@ pub enum Kind {
     Notification,
     /// Área de trabalho: fica no fundo da pilha (`_NET_WM_WINDOW_TYPE_DESKTOP`).
     Desktop,
+    /// Janela de conteúdo inteiro: janela comum, gerenciada pelo gerenciador de janelas
+    /// (o compositor do mide a adota, com minimizar, Alt+Tab e restaurar), sem a
+    /// decoração dele (o app desenha a própria barra com as luzes).
+    ContentWindow,
 }
 
 /// O que criar: nome do app (`WM_CLASS`), tipo, posição e tamanho, reserva de borda e
@@ -108,6 +112,17 @@ pub enum Input {
 }
 
 struct Atoms {
+    net_wm_window_type_normal: xproto::Atom,
+    wm_protocols: xproto::Atom,
+    wm_delete_window: xproto::Atom,
+    motif_wm_hints: xproto::Atom,
+    net_close_window: xproto::Atom,
+    wm_change_state: xproto::Atom,
+    net_wm_state: xproto::Atom,
+    state_fullscreen: xproto::Atom,
+    state_maximized_vert: xproto::Atom,
+    state_maximized_horz: xproto::Atom,
+    net_wm_moveresize: xproto::Atom,
     net_wm_window_type: xproto::Atom,
     net_wm_window_type_dock: xproto::Atom,
     net_wm_window_type_notification: xproto::Atom,
@@ -188,6 +203,17 @@ impl Session {
             net_wm_window_type_dock: intern(&conn, "_NET_WM_WINDOW_TYPE_DOCK")?,
             net_wm_window_type_notification: intern(&conn, "_NET_WM_WINDOW_TYPE_NOTIFICATION")?,
             net_wm_window_type_desktop: intern(&conn, "_NET_WM_WINDOW_TYPE_DESKTOP")?,
+            net_wm_window_type_normal: intern(&conn, "_NET_WM_WINDOW_TYPE_NORMAL")?,
+            wm_protocols: intern(&conn, "WM_PROTOCOLS")?,
+            wm_delete_window: intern(&conn, "WM_DELETE_WINDOW")?,
+            motif_wm_hints: intern(&conn, "_MOTIF_WM_HINTS")?,
+            net_close_window: intern(&conn, "_NET_CLOSE_WINDOW")?,
+            wm_change_state: intern(&conn, "WM_CHANGE_STATE")?,
+            net_wm_state: intern(&conn, "_NET_WM_STATE")?,
+            state_fullscreen: intern(&conn, "_NET_WM_STATE_FULLSCREEN")?,
+            state_maximized_vert: intern(&conn, "_NET_WM_STATE_MAXIMIZED_VERT")?,
+            state_maximized_horz: intern(&conn, "_NET_WM_STATE_MAXIMIZED_HORZ")?,
+            net_wm_moveresize: intern(&conn, "_NET_WM_MOVERESIZE")?,
             net_wm_strut_partial: intern(&conn, "_NET_WM_STRUT_PARTIAL")?,
             net_wm_strut: intern(&conn, "_NET_WM_STRUT")?,
             net_wm_name: intern(&conn, "_NET_WM_NAME")?,
@@ -253,7 +279,9 @@ impl Session {
     pub fn layer(&self, spec: &LayerSpec) -> Result<Layer> {
         let i = &self.inner;
         let conn = &i.conn;
-        let override_redirect = spec.strut.is_none();
+        // Janela de conteúdo inteiro é gerenciada (sem override-redirect); as camadas da
+        // shell continuam fora do gerenciador, como antes.
+        let override_redirect = spec.kind != Kind::ContentWindow && spec.strut.is_none();
         let (depth, visual, colormap) = match (i.argb, i.argb_visual) {
             (true, Some(vis)) => {
                 let cmap = conn.generate_id().map_err(err)?;
@@ -293,7 +321,14 @@ impl Session {
             Kind::Dock => i.atoms.net_wm_window_type_dock,
             Kind::Notification => i.atoms.net_wm_window_type_notification,
             Kind::Desktop => i.atoms.net_wm_window_type_desktop,
+            Kind::ContentWindow => i.atoms.net_wm_window_type_normal,
         };
+        if spec.kind == Kind::ContentWindow {
+            // WM_DELETE_WINDOW: o gerenciador pede o fechamento por essa mensagem.
+            conn.change_property32(xproto::PropMode::REPLACE, window, i.atoms.wm_protocols, xproto::AtomEnum::ATOM, &[i.atoms.wm_delete_window]).map_err(err)?;
+            // Motif: flags = decorações, decorations = 0 (sem barra do gerenciador).
+            conn.change_property32(xproto::PropMode::REPLACE, window, i.atoms.motif_wm_hints, i.atoms.motif_wm_hints, &[2, 0, 0, 0, 0]).map_err(err)?;
+        }
         conn.change_property32(xproto::PropMode::REPLACE, window, i.atoms.net_wm_window_type, xproto::AtomEnum::ATOM, &[wtype]).map_err(err)?;
         // WM_HINTS: sem o `input`, o gerenciador não dá o foco do teclado à camada.
         let input = u32::from(spec.keyboard);
@@ -318,6 +353,12 @@ impl Session {
         Ok(layer)
     }
 
+    /// As camadas têm alfa de verdade (visual de 32 bits e compositor)? Sem isso, o vidro
+    /// e as partes translúcidas viram cinza sobre o que estiver por baixo.
+    pub fn has_argb(&self) -> bool {
+        self.inner.argb
+    }
+
     /// Lê os eventos pendentes (sem bloquear). Chame quando `fd` acordar.
     pub fn poll(&self) -> Result<Vec<Input>> {
         let i = &self.inner;
@@ -325,6 +366,9 @@ impl Session {
         while let Some(event) = i.conn.poll_for_event().map_err(err)? {
             match event {
                 Event::Expose(e) if e.count == 0 => out.push(Input::Expose { window: e.window }),
+                Event::ClientMessage(e) if e.type_ == i.atoms.wm_protocols && e.format == 32 && e.data.as_data32()[0] == i.atoms.wm_delete_window => {
+                    out.push(Input::Closed);
+                }
                 Event::ButtonPress(e) => out.push(pointer(e.event, e.event_x, e.event_y, PointerKind::Press(e.detail))),
                 Event::ButtonRelease(e) => out.push(pointer(e.event, e.event_x, e.event_y, PointerKind::Release(e.detail))),
                 Event::MotionNotify(e) => out.push(pointer(e.event, e.event_x, e.event_y, PointerKind::Motion)),
@@ -680,6 +724,46 @@ impl Layer {
     }
 
     /// Destrói a janela (e o contexto gráfico e o colormap dela).
+    /// Manda uma mensagem de cliente ao gerenciador (a raiz, com redirecionamento).
+    fn send_wm(&self, kind: xproto::Atom, data: [u32; 5]) -> Result<()> {
+        let i = &self.session.inner;
+        let event = xproto::ClientMessageEvent::new(32, self.window, kind, data);
+        i.conn
+            .send_event(false, i.root, xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY, event)
+            .map_err(err)?;
+        i.conn.flush().map_err(err)?;
+        Ok(())
+    }
+
+    /// Pede ao gerenciador que feche a janela (ele envia WM_DELETE_WINDOW ao app).
+    pub fn wm_close(&self) -> Result<()> {
+        self.send_wm(self.session.inner.atoms.net_close_window, [0, 2, 0, 0, 0])
+    }
+
+    /// Pede ao gerenciador que minimize a janela (WM_CHANGE_STATE com IconicState).
+    pub fn wm_minimize(&self) -> Result<()> {
+        self.send_wm(self.session.inner.atoms.wm_change_state, [3, 0, 0, 0, 0])
+    }
+
+    /// Alterna a tela cheia (estado `_NET_WM_STATE_FULLSCREEN`).
+    pub fn wm_toggle_fullscreen(&self) -> Result<()> {
+        let a = &self.session.inner.atoms;
+        self.send_wm(a.net_wm_state, [2, a.state_fullscreen, 0, 1, 0])
+    }
+
+    /// Alterna maximizar (vertical e horizontal).
+    pub fn wm_toggle_maximize(&self) -> Result<()> {
+        let a = &self.session.inner.atoms;
+        self.send_wm(a.net_wm_state, [2, a.state_maximized_vert, a.state_maximized_horz, 1, 0])
+    }
+
+    /// Começa o arrasto da janela pelo gerenciador, a partir do ponteiro atual.
+    pub fn wm_move(&self) -> Result<()> {
+        let i = &self.session.inner;
+        let pointer = i.conn.query_pointer(i.root).map_err(err)?.reply().map_err(err)?;
+        self.send_wm(i.atoms.net_wm_moveresize, [pointer.root_x as u32, pointer.root_y as u32, 8, 1, 1])
+    }
+
     pub fn destroy(mut self) -> Result<()> {
         self.free()
     }

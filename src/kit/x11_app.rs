@@ -3,6 +3,7 @@
 //! e entrar), o texto digitado e as teclas especiais. Os menus da barra superior e as
 //! janelas filhas não existem aqui (o X11 não tem o compositor do mide para isso).
 
+use super::ui::WindowRequest;
 use std::error::Error;
 use std::os::fd::BorrowedFd;
 use std::time::{Duration, Instant};
@@ -44,7 +45,14 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
     };
     let spec = LayerSpec {
         app_id: window.app_id.clone(),
-        kind: if window.desktop { Kind::Desktop } else { Kind::Dock },
+        kind: if window.desktop {
+            Kind::Desktop
+        } else if window.full_size && !window.lock && !window.corner && window.exclusive.is_none() && window.overlay.is_none() {
+            // Conteúdo inteiro: janela comum, adotada pelo gerenciador (ver `Kind::ContentWindow`).
+            Kind::ContentWindow
+        } else {
+            Kind::Dock
+        },
         rect,
         strut: if window.desktop || window.lock { None } else { window.exclusive },
         keyboard: window.lock,
@@ -60,6 +68,8 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
     let mut last_raise = Instant::now();
 
     let mut ctx = Ctx::new(window.theme.clone());
+    // Vidro só com alfa real: sem ARGB, o fundo translúcido sairia cinza.
+    ctx.glass_allowed = session.has_argb();
     let mut pressed = false;
     let mut needs_frame = true;
     let mut last_frame = Instant::now();
@@ -110,6 +120,20 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
             needs_frame = false;
             last_frame = Instant::now();
             draw(&mut app, &mut ctx, &mut layer, rect, base.as_ref())?;
+            // Luzes da janela de conteúdo inteiro: o pedido vai ao gerenciador (que faz a ação).
+            if let Some(request) = ctx.window_request.take() {
+                tracing::debug!("janela {}: pedido {request:?} enviado ao gerenciador", window.app_id);
+                let sent = match request {
+                    WindowRequest::Close => layer.wm_close(),
+                    WindowRequest::Minimize => layer.wm_minimize(),
+                    WindowRequest::ToggleFullscreen => layer.wm_toggle_fullscreen(),
+                    WindowRequest::ToggleMaximize => layer.wm_toggle_maximize(),
+                    WindowRequest::Move => layer.wm_move(),
+                };
+                if let Err(err) = sent {
+                    tracing::warn!("pedido à janela não foi enviado ({err})");
+                }
+            }
             // Senha aceita (ou o app pediu para sair): desbloqueia e termina.
             if std::mem::take(&mut ctx.unlock_request) {
                 break;
