@@ -812,6 +812,9 @@ impl Layer {
     /// Começa o arrasto da janela pelo gerenciador, a partir do ponteiro atual.
     pub fn wm_move(&self) -> Result<()> {
         let i = &self.session.inner;
+        // O pressionar deixa um grab implícito com a janela do app; o gerenciador não
+        // consegue prender o ponteiro enquanto ele existe. Soltar antes (como o GTK faz).
+        i.conn.ungrab_pointer(x11rb::CURRENT_TIME).map_err(err)?;
         let pointer = i.conn.query_pointer(i.root).map_err(err)?.reply().map_err(err)?;
         self.send_wm(i.atoms.net_wm_moveresize, [pointer.root_x as u32, pointer.root_y as u32, 8, 1, 1])
     }
