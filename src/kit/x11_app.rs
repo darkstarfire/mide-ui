@@ -76,7 +76,11 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
     ctx.glass_allowed = session.has_argb();
     ctx.no_alpha = !session.has_argb();
     ctx.content_window = window.full_size;
-    ctx.opaque_bg = !window.desktop && !window.lock;
+    // Overlay sem alfa que não cobre a tela (mide-search): sem fundo da cor do tema, que
+    // sairia como retângulo; a forma da janela segue o que foi desenhado.
+    let shape_overlay = window.overlay.is_some() && !session.has_argb() && (rect.w < sw || rect.h < sh);
+    ctx.opaque_bg = !window.desktop && !window.lock && !shape_overlay;
+    let mut last_mask: Option<Vec<Rect>> = None;
     let mut pressed = false;
     let mut needs_frame = true;
     let mut last_frame = Instant::now();
@@ -130,7 +134,11 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
         if needs_frame || pressed || last_frame.elapsed() >= IDLE_TICK {
             needs_frame = false;
             last_frame = Instant::now();
-            draw(&mut app, &mut ctx, &mut layer, rect, base.as_ref())?;
+            let mask = draw(&mut app, &mut ctx, &mut layer, rect, base.as_ref(), shape_overlay)?;
+            // Forma nova só quando muda; se o servidor recusar, tenta de novo no quadro seguinte.
+            if let Some(rects) = mask.filter(|r| last_mask.as_ref() != Some(r)) {
+                last_mask = layer.set_bounding_rects(&rects).ok().map(|()| rects);
+            }
             if content_window {
                 if let Ok((cw, ch)) = layer.size() {
                     if shaped != Some((cw, ch)) {
@@ -175,7 +183,8 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
 }
 
 /// Um quadro: a interface do app (`view`) desenhada num `Pixmap` e enviada à camada.
-fn draw(app: &mut impl App, ctx: &mut Ctx, layer: &mut Layer, rect: Rect, base: Option<&Pixmap>) -> Result<(), Box<dyn Error>> {
+/// `mask`: devolve a forma do quadro (alfa >= 128) para a janela recortar com ela.
+fn draw(app: &mut impl App, ctx: &mut Ctx, layer: &mut Layer, rect: Rect, base: Option<&Pixmap>, mask: bool) -> Result<Option<Vec<Rect>>, Box<dyn Error>> {
     crate::ui::draw::set_scale(1.0);
     // O fundo (papel de parede) fica por baixo; sem ele, o quadro começa transparente.
     let mut canvas = match base {
@@ -206,7 +215,7 @@ fn draw(app: &mut impl App, ctx: &mut Ctx, layer: &mut Layer, rect: Rect, base: 
         [0, 0, 0]
     };
     layer.present(&canvas, background).map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(mask.then(|| super::x11_layer::alpha_rects(&canvas, 128)))
 }
 
 /// Eventos que chegaram desde o último quadro, já com as mudanças do ponteiro.

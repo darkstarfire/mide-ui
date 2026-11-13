@@ -55,6 +55,30 @@ pub struct Rect {
     pub h: u32,
 }
 
+/// Retângulos (uma faixa por linha) onde o quadro tem alfa de pelo menos `min_alpha`:
+/// a forma de uma camada sem alfa, como o overlay do mide-search.
+pub fn alpha_rects(pixmap: &Pixmap, min_alpha: u8) -> Vec<Rect> {
+    let (w, h) = (pixmap.width() as usize, pixmap.height() as usize);
+    let data = pixmap.data();
+    let mut out = Vec::new();
+    for y in 0..h {
+        let row = &data[y * w * 4..(y + 1) * w * 4];
+        let mut x = 0;
+        while x < w {
+            if row[x * 4 + 3] < min_alpha {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < w && row[x * 4 + 3] >= min_alpha {
+                x += 1;
+            }
+            out.push(Rect { x: start as i32, y: y as i32, w: (x - start) as u32, h: 1 });
+        }
+    }
+    out
+}
+
 /// Borda da tela onde a camada reserva espaço (`strut`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edge {
@@ -605,6 +629,19 @@ impl Layer {
                 i.conn.shape_mask(shape::SO::SET, kind, self.window, 0, 0, NONE).map_err(err)?;
             }
         }
+        i.conn.flush().map_err(err)?;
+        Ok(())
+    }
+
+    /// Forma visível feita de vários retângulos (SHAPE de limite): o que estiver fora
+    /// deles some. Usado quando a camada não tem alfa e a forma segue o desenho.
+    pub fn set_bounding_rects(&mut self, rects: &[Rect]) -> Result<()> {
+        let i = &self.session.inner;
+        if !i.shape {
+            return Err(Error("o servidor não tem SHAPE".into()));
+        }
+        let xr: Vec<xproto::Rectangle> = rects.iter().map(|r| xproto::Rectangle { x: r.x as i16, y: r.y as i16, width: r.w as u16, height: r.h as u16 }).collect();
+        i.conn.shape_rectangles(shape::SO::SET, shape::SK::BOUNDING, xproto::ClipOrdering::UNSORTED, self.window, 0, 0, &xr).map_err(err)?;
         i.conn.flush().map_err(err)?;
         Ok(())
     }
