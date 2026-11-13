@@ -790,6 +790,9 @@ pub struct Ctx {
     /// Janela de conteúdo inteiro (`Window::full_size_content`): o app desenha os
     /// botões da janela e as áreas de arrastar.
     pub content_window: bool,
+    /// No X11 sem alfa, o quadro é enviado sobre a cor do tema (não preto): diálogos e
+    /// janelas comuns também precisam disso, não só as de conteúdo inteiro.
+    pub opaque_bg: bool,
     /// A janela está maximizada (ou presa a um lado da tela).
     pub maximized: bool,
     /// A janela está em tela cheia: os botões da janela somem (o compositor mostra a
@@ -907,6 +910,7 @@ impl Ctx {
             controls_drawn: false,
             drag_area_handled: false,
             content_window: false,
+            opaque_bg: false,
             maximized: false,
             fullscreen: false,
             fullscreen_request: None,

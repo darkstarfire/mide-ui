@@ -76,6 +76,7 @@ pub fn run(window: Window, mut app: impl App) -> Result<(), Box<dyn Error>> {
     ctx.glass_allowed = session.has_argb();
     ctx.no_alpha = !session.has_argb();
     ctx.content_window = window.full_size;
+    ctx.opaque_bg = !window.desktop && !window.lock;
     let mut pressed = false;
     let mut needs_frame = true;
     let mut last_frame = Instant::now();
@@ -198,7 +199,7 @@ fn draw(app: &mut impl App, ctx: &mut Ctx, layer: &mut Layer, rect: Rect, base: 
     input.keys.clear();
     // Sem alfa (X11 sem ARGB), o que é translúcido se mistura com a cor de fundo enviada:
     // numa janela de conteúdo, a cor do tema (senão sai preto); nas camadas, o preto.
-    let background = if ctx.content_window {
+    let background = if ctx.opaque_bg {
         let c = ctx.theme.background;
         [c[0], c[1], c[2]]
     } else {
