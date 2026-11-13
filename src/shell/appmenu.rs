@@ -388,7 +388,9 @@ pub fn clean_label(label: &str) -> String {
     out
 }
 
-/// Atalho do dbusmenu (`[["Control", "s"]]`) como texto (`Ctrl+S`).
+/// Atalho do dbusmenu (`[["Control", "s"]]`) como texto (`Ctrl+S`, `Super+Shift+D`):
+/// quem mostra (a barra do mide) desenha como no macOS, sabendo do teclado no estilo
+/// Mac.
 fn shortcut_text(value: &Value<'_>) -> String {
     let value = match value {
         Value::Value(inner) => inner.as_ref(),
@@ -401,29 +403,16 @@ fn shortcut_text(value: &Value<'_>) -> String {
         return String::new();
     };
     let keys: Vec<&str> = keys.iter().filter_map(|k| <&str>::try_from(k).ok()).collect();
-    // Com ⌘ (Super), como no macOS: símbolos e sem "+" (⌘⇧D).
-    let mac = keys.contains(&"Super");
     let names: Vec<String> = keys
         .iter()
         .map(|k| match *k {
-            "Control" if mac => "⌃".to_string(),
-            "Shift" if mac => "⇧".to_string(),
-            "Alt" if mac => "⌥".to_string(),
-            "Super" => "⌘".to_string(),
             "Control" => "Ctrl".to_string(),
-            "Return" | "KP_Enter" => "Enter".to_string(),
-            "Page_Up" => "PgUp".to_string(),
-            "Page_Down" => "PgDn".to_string(),
-            "Up" => "↑".to_string(),
-            "Down" => "↓".to_string(),
-            "Left" => "←".to_string(),
-            "Right" => "→".to_string(),
-            "Delete" => "Del".to_string(),
+            "KP_Enter" => "Return".to_string(),
             other if other.chars().count() == 1 => other.to_uppercase(),
             other => other.to_string(),
         })
         .collect();
-    names.join(if mac { "" } else { "+" })
+    names.join("+")
 }
 
 #[cfg(test)]

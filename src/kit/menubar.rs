@@ -104,15 +104,15 @@ pub fn window_menu(extra: Vec<MenuItem>) -> MenuGroup {
     if crate::control_client::on_mide() {
         let w = |verb: &str, label: std::borrow::Cow<str>| MenuItem::action(&format!("{WINDOW_PREFIX}{verb}"), &label);
         items.extend([
-            w("fill", tr("Fill")),
+            w("fill", tr("Fill")).shortcut("Super+Up"),
             w("center", tr("Center")),
             fullscreen_item(),
             MenuItem::Separator,
             MenuItem::Submenu {
                 label: tr("Move & Resize").into(),
                 items: vec![
-                    w("left", trc("Window menu", "Left")),
-                    w("right", trc("Window menu", "Right")),
+                    w("left", trc("Window menu", "Left")).shortcut("Super+Left"),
+                    w("right", trc("Window menu", "Right")).shortcut("Super+Right"),
                     w("top", trc("Window menu", "Top")),
                     w("bottom", trc("Window menu", "Bottom")),
                     MenuItem::Separator,
@@ -121,7 +121,7 @@ pub fn window_menu(extra: Vec<MenuItem>) -> MenuGroup {
                     w("bottom-left", trc("Window menu", "Bottom Left")),
                     w("bottom-right", trc("Window menu", "Bottom Right")),
                     MenuItem::Separator,
-                    w("restore", tr("Return to Previous Size")),
+                    w("restore", tr("Return to Previous Size")).shortcut("Super+Down"),
                 ],
             },
             MenuItem::Submenu {
@@ -445,7 +445,7 @@ mod tests {
             items: vec![MenuItem::action("a", "A").shortcut("Super+Shift+D"), MenuItem::action("b", "B").shortcut("Ctrl+Page_Down")],
         }];
         let shell = crate::appmenu::parse_for_test(&Tree::new(groups).node(1)).unwrap();
-        assert_eq!(shell.children[0].shortcut, "⌘⇧D");
-        assert_eq!(shell.children[1].shortcut, "Ctrl+PgDn");
+        assert_eq!(shell.children[0].shortcut, "Super+Shift+D");
+        assert_eq!(shell.children[1].shortcut, "Ctrl+Page_Down");
     }
 }

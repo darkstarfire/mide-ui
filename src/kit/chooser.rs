@@ -140,6 +140,8 @@ pub struct FileChooser {
     query: String,
     /// "Nova pasta": o nome sendo escrito.
     new_folder: Option<String>,
+    /// Largura da barra lateral na janela própria (`embedded`), arrastável.
+    side_width: f32,
 }
 
 impl FileChooser {
@@ -252,6 +254,7 @@ impl FileChooser {
             forward: Vec::new(),
             query: String::new(),
             new_folder: None,
+            side_width: 190.0,
         };
         chooser.reload();
         chooser
@@ -325,204 +328,54 @@ impl FileChooser {
         let mut action: Option<Action> = None;
         let (ww, wh) = ui.window_size();
         // Compacto, como o painel de abrir do Mac (a janela do app continua à vista).
-        let width = if self.embedded { ww } else { (ww - 48.0).clamp(420.0, 700.0) };
+        let width = (ww - 48.0).clamp(420.0, 700.0);
         let row = ui.theme().row + ui.theme().spacing;
-        // Linhas embaixo da lista: filtros, opções, aviso, nova pasta e botões.
-        let extra = (self.filters.len() > 1) as usize as f32 * row
-            + self.choices.len() as f32 * row
-            + (self.mode == Mode::SaveFiles) as usize as f32 * 24.0
-            + self.message.is_some() as usize as f32 * 24.0
-            + self.new_folder.is_some() as usize as f32 * row;
+        let extra = self.extra_height(row);
         let top_rows = if self.mode == Mode::Save { row } else { 0.0 };
         let list_h = (wh * 0.6 - 150.0 - extra - top_rows).clamp(160.0, 320.0);
-        let title = self.title.clone();
         let (ctrl, shift) = (ui.input().ctrl, ui.input().shift);
-        let embedded = self.embedded;
-        let sidebar_w = if width < 560.0 { 0.0 } else { 172.0 };
-        // O título fica no alto da barra lateral (com ela), para a barra de ferramentas
-        // começar no topo do diálogo, sem uma faixa vazia em cima dela.
-        let title_in_sidebar = !embedded && sidebar_w > 0.0;
-        let body = |ui: &mut Ui| {
-            if !embedded && !title_in_sidebar {
-                ui.strong(&title);
-            }
-            // Salvar: o nome em cima, como no Mac.
-            if self.mode == Mode::Save {
-                if std::mem::take(&mut self.focus) {
-                    ui.focus_next_input();
-                }
-                ui.form_row(&tr("Save As:"), 110.0, |ui| {
-                    if ui.text_input(&mut self.name, &tr("File name")).submitted() {
-                        action = Some(Action::Confirm);
-                    }
-                });
-            }
-            let list_h = if embedded { (ui.remaining_height() - extra - row - 2.0 * row - ui.theme().padding).max(140.0) } else { list_h };
-            let picked = self.picked_all();
-            let entries = &self.entries;
-            let folders_only = matches!(self.mode, Mode::Folder | Mode::SaveFiles);
-            let dir = self.dir.clone();
-            let query = &mut self.query;
-            let (has_back, has_forward) = (!self.back.is_empty(), !self.forward.is_empty());
-            // A barra lateral rola dentro da altura da coluna principal (barra de
-            // ferramentas, cabeçalho e lista): com muitos lugares, ela não empurra os
-            // botões de baixo para fora da janela.
-            let title_h = if title_in_sidebar { 28.0 + ui.theme().spacing } else { 0.0 };
-            let side_h = list_h + 24.0 + 36.0 - title_h;
-            let sidebar = |ui: &mut Ui, action: &mut Option<Action>| {
-                if title_in_sidebar {
+        if self.embedded {
+            self.show_window(ui, row, extra, &mut action);
+        } else {
+            let title = self.title.clone();
+            let sidebar_w = if width < 560.0 { 0.0 } else { 172.0 };
+            let spacing = ui.theme().spacing;
+            ui.modal_centered(width, |ui| {
+                // O título fica no alto da barra lateral (com ela), para a barra de
+                // ferramentas começar no topo do diálogo, sem uma faixa vazia em cima.
+                if sidebar_w == 0.0 {
                     ui.strong(&title);
                 }
-                ui.scroll_area(side_h, |ui| {
-                    ui.heading(&tr("Favorites"));
-                    for (label, icon, place) in places() {
-                        if label == "Computer" {
-                            ui.heading(&tr("Locations"));
-                        }
-                        let current = place == dir;
-                        if ui.list_row(icon, &tr(label), &[], current).clicked() && !current {
-                            *action = Some(Action::Go(place));
-                        }
-                    }
-                });
-            };
-            let mut main = |ui: &mut Ui, action: &mut Option<Action>| {
-                // Barra: voltar/avançar, o nome da pasta, subir e a busca. A mesma barra do
-                // Arquivos (altura e espaçamento do cabeçalho), não uma linha de formulário.
-                ui.toolbar(|ui| {
-                    match ui.tool_group(&[Tool::new("go-previous-symbolic", "Back").enabled(has_back), Tool::new("go-next-symbolic", "Forward").enabled(has_forward)]) {
-                        Some(0) => *action = Some(Action::Back),
-                        Some(1) => *action = Some(Action::Forward),
-                        _ => {}
-                    }
-                    let up = dir.parent().map(Path::to_path_buf);
-                    if ui.tool_group(&[Tool::new("go-up-symbolic", "Enclosing Folder").enabled(up.is_some())]).is_some() {
-                        *action = up.map(Action::Go);
-                    }
-                    let name = dir.file_name().map_or_else(|| tr("Computer").into_owned(), |n| n.to_string_lossy().into_owned());
-                    let name = if dir == crate::places::home_dir() { tr("Home").into_owned() } else { name };
-                    ui.toolbar_title(&name, 220.0);
-                    ui.push_right(200.0);
-                    ui.sized(200.0, |ui| {
-                        ui.search_field(query, &tr("Search"));
-                    });
-                });
-                let q = crate::apps::fold(query.trim());
-                let shown: Vec<usize> = (0..entries.len()).filter(|&i| q.is_empty() || crate::apps::fold(&entries[i].name).contains(&q)).collect();
-                ui.list_header(&tr("Name"), &[(&tr("Size"), 90.0), (&tr("Date Modified"), 130.0)], (0, true));
-                ui.scroll_area(list_h, |ui| {
-                    if shown.is_empty() {
-                        ui.note(&tr(if !q.is_empty() {
-                            "No items with that name here."
-                        } else if folders_only {
-                            "No folders here."
-                        } else {
-                            "Empty folder."
-                        }));
-                    }
-                    for &i in &shown {
-                        let entry = &entries[i];
-                        let size = entry.size.map(crate::files::size_text).unwrap_or_else(|| "—".into());
-                        let date = entry.modified.map(|m| crate::files::date_text(m, std::time::SystemTime::now())).unwrap_or_default();
-                        let icon = if entry.is_dir { "folder" } else { file_icon(&entry.path) };
-                        let r = ui.list_row(icon, &entry.name, &[(&size, 90.0), (&date, 130.0)], picked.contains(&i));
-                        if r.double_clicked() {
-                            *action = Some(if entry.is_dir { Action::Go(entry.path.clone()) } else { Action::Pick(entry.path.clone()) });
-                        } else if r.clicked() {
-                            *action = Some(Action::Select(i));
-                        }
-                    }
-                });
-            };
-            if sidebar_w > 0.0 {
-                let mut a1 = None;
-                let mut a2 = None;
-                ui.columns(sidebar_w, 16.0, |ui| sidebar(ui, &mut a1), |ui| main(ui, &mut a2));
-                action = a2.or(a1).or(action.take());
-            } else {
-                let mut a2 = None;
-                main(ui, &mut a2);
-                action = a2.or(action.take());
-            }
-            if self.mode == Mode::SaveFiles {
-                let n = self.save_names.len();
-                ui.note(&trn("{n} file will be saved in the chosen folder.", "{n} files will be saved in the chosen folder.", n as u64));
-            }
-            if self.filters.len() > 1 {
-                let names: Vec<String> = self.filters.iter().map(|f| f.name.clone()).collect();
-                let mut current = self.filter;
-                if ui.dropdown(&tr("Show"), &names, &mut current).changed() {
-                    action = Some(Action::Filter(current));
-                }
-            }
-            for choice in &mut self.choices {
-                if choice.options.is_empty() {
-                    let mut on = choice.value == "true";
-                    if ui.switch(&choice.label, &mut on).changed() {
-                        choice.value = on.to_string();
-                    }
+                self.save_name_row(ui, &mut action);
+                if sidebar_w > 0.0 {
+                    // A barra lateral rola dentro da altura da coluna principal (barra de
+                    // ferramentas, cabeçalho e lista): com muitos lugares, ela não empurra
+                    // os botões de baixo para fora da janela.
+                    let side_h = list_h + 24.0 + 36.0 - (28.0 + spacing);
+                    let dir = self.dir.clone();
+                    let (mut a1, mut a2) = (None, None);
+                    ui.columns(
+                        sidebar_w,
+                        16.0,
+                        |ui| {
+                            ui.strong(&title);
+                            ui.scroll_area(side_h, |ui| places_list(ui, &dir, &mut a1));
+                        },
+                        |ui| {
+                            self.toolbar_row(ui, &mut a2);
+                            self.file_list(ui, list_h, &mut a2);
+                        },
+                    );
+                    action = a2.or(a1).or(action.take());
                 } else {
-                    let names: Vec<String> = choice.options.iter().map(|(_, n)| n.clone()).collect();
-                    let mut current = choice.options.iter().position(|(id, _)| *id == choice.value).unwrap_or(0);
-                    if ui.dropdown(&choice.label, &names, &mut current).changed() {
-                        choice.value = choice.options[current].0.clone();
-                    }
+                    let mut a2 = None;
+                    self.toolbar_row(ui, &mut a2);
+                    self.file_list(ui, list_h, &mut a2);
+                    action = a2.or(action.take());
                 }
-            }
-            // Nova pasta: o nome numa linha, com Criar.
-            if let Some(name) = self.new_folder.as_mut() {
-                ui.form_row(&tr("New Folder:"), 110.0, |ui| {
-                    ui.sized(260.0, |ui| {
-                        if ui.text_input(name, &tr("untitled folder")).submitted() {
-                            action = Some(Action::CreateFolder);
-                        }
-                    });
-                    ui.sized(90.0, |ui| {
-                        if ui.button_styled(&tr("Create"), super::ButtonStyle::Bordered).clicked() {
-                            action = Some(Action::CreateFolder);
-                        }
-                    });
-                });
-            }
-            if let Some(message) = &self.message {
-                ui.note(message);
-            }
-            ui.row(|ui| {
-                let label = match self.mode {
-                    _ if !self.accept_label.is_empty() => std::borrow::Cow::Borrowed(self.accept_label.as_str()),
-                    Mode::Open => tr("Open"),
-                    Mode::Save | Mode::SaveFiles => tr("Save"),
-                    Mode::Folder => tr("Choose"),
-                };
-                // "Nova pasta" à esquerda (onde se salva ou escolhe uma pasta).
-                if self.mode != Mode::Open && self.new_folder.is_none() {
-                    ui.sized(120.0, |ui| {
-                        if ui.button_styled(&tr("New Folder"), super::ButtonStyle::Bordered).clicked() {
-                            action = Some(Action::NewFolder);
-                        }
-                    });
-                }
-                // Cancelar e o botão principal do tamanho do texto, encostados na borda
-                // direita (o último termina onde termina a lista).
-                let cancel = tr("Cancel");
-                let (wc, wa) = (ui.button_width(&cancel).max(88.0), ui.button_width(&label).max(88.0));
-                ui.push_right(wc + ui.theme().spacing + wa);
-                ui.sized(wc, |ui| {
-                    if ui.button(&cancel).clicked() {
-                        action = Some(Action::Cancel);
-                    }
-                });
-                ui.sized(wa, |ui| {
-                    if ui.primary_button(&label).clicked() {
-                        action = Some(Action::Confirm);
-                    }
-                });
+                self.extras(ui, &mut action);
+                self.buttons_row(ui, &mut action);
             });
-        };
-        if embedded {
-            ui.page(body);
-        } else {
-            ui.modal_centered(width, body);
         }
         if action.is_none() && esc && self.new_folder.is_some() {
             self.new_folder = None;
@@ -621,6 +474,232 @@ impl FileChooser {
         choice
     }
 
+    /// Altura das linhas embaixo da lista: filtros, opções, aviso e nova pasta.
+    fn extra_height(&self, row: f32) -> f32 {
+        (self.filters.len() > 1) as usize as f32 * row
+            + self.choices.len() as f32 * row
+            + (self.mode == Mode::SaveFiles) as usize as f32 * 24.0
+            + self.message.is_some() as usize as f32 * 24.0
+            + self.new_folder.is_some() as usize as f32 * row
+    }
+
+    /// O seletor ocupando a janela (o `mide-chooser`), no visual do Tahoe como as
+    /// Configurações e o Arquivos: barra lateral de vidro flutuante com os botões da
+    /// janela no topo e os lugares, barra de ferramentas sem linha à direita, a lista e,
+    /// embaixo, "Nova pasta" à esquerda e Cancelar/principal à direita, com a mesma
+    /// margem do conteúdo até as bordas da janela (dos lados e embaixo).
+    fn show_window(&mut self, ui: &mut Ui, row: f32, extra: f32, action: &mut Option<Action>) {
+        let (ww, _) = ui.window_size();
+        let pad = ui.theme().padding;
+        let spacing = ui.theme().spacing;
+        // Janela estreita: sem a barra lateral (a barra de ferramentas leva os botões).
+        let mut left = 0.0;
+        if ww >= 560.0 {
+            let dir = self.dir.clone();
+            let mut side = None;
+            let mut width = self.side_width;
+            ui.sidebar_panel(
+                &mut width,
+                150.0,
+                280.0,
+                |ui| {
+                    let (_, _, sw, sh) = ui.region();
+                    ui.at(8.0, 0.0, sw - 16.0, |ui| {
+                        ui.scroll_area((sh - 8.0).max(1.0), |ui| places_list(ui, &dir, &mut side));
+                    });
+                },
+                |ui| left = ui.to_window(ui.region()).0,
+            );
+            self.side_width = width;
+            if side.is_some() {
+                *action = side;
+            }
+        }
+        let content_w = ww - left;
+        ui.at(left, 0.0, content_w, |ui| {
+            let mut a = None;
+            self.toolbar_row(ui, &mut a);
+            if a.is_some() {
+                *action = a;
+            }
+        });
+        // O resto com a margem do tema dos dois lados e embaixo.
+        let x = left + if left > 0.0 { spacing.max(8.0) } else { pad };
+        let w = ww - x - pad;
+        ui.at(x, crate::kit::theme::TOOLBAR_HEIGHT, w, |ui| {
+            let mut a = None;
+            self.save_name_row(ui, &mut a);
+            // Cabeçalho (24), linhas de baixo, botões (a altura deles, sem o espaço que
+            // `row` soma) e a margem de baixo igual à dos lados.
+            let list_h = (ui.remaining_height() - 24.0 - extra - (row - spacing) - spacing - pad).max(120.0);
+            self.file_list(ui, list_h, &mut a);
+            ui.space(spacing);
+            self.extras(ui, &mut a);
+            self.buttons_row(ui, &mut a);
+            if a.is_some() {
+                *action = a;
+            }
+        });
+    }
+
+    /// Salvar: o nome em cima, como no Mac.
+    fn save_name_row(&mut self, ui: &mut Ui, action: &mut Option<Action>) {
+        if self.mode != Mode::Save {
+            return;
+        }
+        if std::mem::take(&mut self.focus) {
+            ui.focus_next_input();
+        }
+        ui.form_row(&tr("Save As:"), 110.0, |ui| {
+            if ui.text_input(&mut self.name, &tr("File name")).submitted() {
+                *action = Some(Action::Confirm);
+            }
+        });
+    }
+
+    /// Barra: voltar/avançar, subir, o nome da pasta e a busca. A mesma barra do
+    /// Arquivos (altura e espaçamento do cabeçalho), não uma linha de formulário.
+    fn toolbar_row(&mut self, ui: &mut Ui, action: &mut Option<Action>) {
+        let (has_back, has_forward) = (!self.back.is_empty(), !self.forward.is_empty());
+        let dir = self.dir.clone();
+        let query = &mut self.query;
+        ui.toolbar(|ui| {
+            match ui.tool_group(&[Tool::new("go-previous-symbolic", "Back").enabled(has_back), Tool::new("go-next-symbolic", "Forward").enabled(has_forward)]) {
+                Some(0) => *action = Some(Action::Back),
+                Some(1) => *action = Some(Action::Forward),
+                _ => {}
+            }
+            let up = dir.parent().map(Path::to_path_buf);
+            if ui.tool_group(&[Tool::new("go-up-symbolic", "Enclosing Folder").enabled(up.is_some())]).is_some() {
+                *action = up.map(Action::Go);
+            }
+            let name = dir.file_name().map_or_else(|| tr("Computer").into_owned(), |n| n.to_string_lossy().into_owned());
+            let name = if dir == crate::places::home_dir() { tr("Home").into_owned() } else { name };
+            ui.toolbar_title(&name, 220.0);
+            ui.push_right(200.0);
+            ui.sized(200.0, |ui| {
+                ui.search_field(query, &tr("Search"));
+            });
+        });
+    }
+
+    /// Cabeçalho e a lista da pasta, com `list_h` de altura.
+    fn file_list(&mut self, ui: &mut Ui, list_h: f32, action: &mut Option<Action>) {
+        let picked = self.picked_all();
+        let entries = &self.entries;
+        let folders_only = matches!(self.mode, Mode::Folder | Mode::SaveFiles);
+        let q = crate::apps::fold(self.query.trim());
+        let shown: Vec<usize> = (0..entries.len()).filter(|&i| q.is_empty() || crate::apps::fold(&entries[i].name).contains(&q)).collect();
+        ui.list_header(&tr("Name"), &[(&tr("Size"), 90.0), (&tr("Date Modified"), 130.0)], (0, true));
+        ui.scroll_area(list_h, |ui| {
+            if shown.is_empty() {
+                ui.note(&tr(if !q.is_empty() {
+                    "No items with that name here."
+                } else if folders_only {
+                    "No folders here."
+                } else {
+                    "Empty folder."
+                }));
+            }
+            for &i in &shown {
+                let entry = &entries[i];
+                let size = entry.size.map(crate::files::size_text).unwrap_or_else(|| "—".into());
+                let date = entry.modified.map(|m| crate::files::date_text(m, std::time::SystemTime::now())).unwrap_or_default();
+                let icon = if entry.is_dir { "folder" } else { file_icon(&entry.path) };
+                let r = ui.list_row(icon, &entry.name, &[(&size, 90.0), (&date, 130.0)], picked.contains(&i));
+                if r.double_clicked() {
+                    *action = Some(if entry.is_dir { Action::Go(entry.path.clone()) } else { Action::Pick(entry.path.clone()) });
+                } else if r.clicked() {
+                    *action = Some(Action::Select(i));
+                }
+            }
+        });
+    }
+
+    /// Embaixo da lista: aviso do SaveFiles, filtros, opções, nova pasta e mensagem.
+    fn extras(&mut self, ui: &mut Ui, action: &mut Option<Action>) {
+        if self.mode == Mode::SaveFiles {
+            let n = self.save_names.len();
+            ui.note(&trn("{n} file will be saved in the chosen folder.", "{n} files will be saved in the chosen folder.", n as u64));
+        }
+        if self.filters.len() > 1 {
+            let names: Vec<String> = self.filters.iter().map(|f| f.name.clone()).collect();
+            let mut current = self.filter;
+            if ui.dropdown(&tr("Show"), &names, &mut current).changed() {
+                *action = Some(Action::Filter(current));
+            }
+        }
+        for choice in &mut self.choices {
+            if choice.options.is_empty() {
+                let mut on = choice.value == "true";
+                if ui.switch(&choice.label, &mut on).changed() {
+                    choice.value = on.to_string();
+                }
+            } else {
+                let names: Vec<String> = choice.options.iter().map(|(_, n)| n.clone()).collect();
+                let mut current = choice.options.iter().position(|(id, _)| *id == choice.value).unwrap_or(0);
+                if ui.dropdown(&choice.label, &names, &mut current).changed() {
+                    choice.value = choice.options[current].0.clone();
+                }
+            }
+        }
+        // Nova pasta: o nome numa linha, com Criar.
+        if let Some(name) = self.new_folder.as_mut() {
+            ui.form_row(&tr("New Folder:"), 110.0, |ui| {
+                ui.sized(260.0, |ui| {
+                    if ui.text_input(name, &tr("untitled folder")).submitted() {
+                        *action = Some(Action::CreateFolder);
+                    }
+                });
+                ui.sized(90.0, |ui| {
+                    if ui.button_styled(&tr("Create"), super::ButtonStyle::Bordered).clicked() {
+                        *action = Some(Action::CreateFolder);
+                    }
+                });
+            });
+        }
+        if let Some(message) = &self.message {
+            ui.note(message);
+        }
+    }
+
+    /// "Nova pasta" à esquerda e Cancelar/principal encostados na borda direita.
+    fn buttons_row(&mut self, ui: &mut Ui, action: &mut Option<Action>) {
+        ui.row(|ui| {
+            let label = match self.mode {
+                _ if !self.accept_label.is_empty() => std::borrow::Cow::Borrowed(self.accept_label.as_str()),
+                Mode::Open => tr("Open"),
+                Mode::Save | Mode::SaveFiles => tr("Save"),
+                Mode::Folder => tr("Choose"),
+            };
+            // "Nova pasta" à esquerda (onde se salva ou escolhe uma pasta).
+            if self.mode != Mode::Open && self.new_folder.is_none() {
+                let new = tr("New Folder");
+                let wn = ui.button_width(&new).max(88.0);
+                ui.sized(wn, |ui| {
+                    if ui.button_styled(&new, super::ButtonStyle::Bordered).clicked() {
+                        *action = Some(Action::NewFolder);
+                    }
+                });
+            }
+            // Cancelar e o botão principal do tamanho do texto, encostados na borda
+            // direita (o último termina onde termina a lista).
+            let cancel = tr("Cancel");
+            let (wc, wa) = (ui.button_width(&cancel).max(88.0), ui.button_width(&label).max(88.0));
+            ui.push_right(wc + ui.theme().spacing + wa);
+            ui.sized(wc, |ui| {
+                if ui.button(&cancel).clicked() {
+                    *action = Some(Action::Cancel);
+                }
+            });
+            ui.sized(wa, |ui| {
+                if ui.primary_button(&label).clicked() {
+                    *action = Some(Action::Confirm);
+                }
+            });
+        });
+    }
+
     /// Duplo clique num arquivo.
     fn pick(&mut self, path: PathBuf) -> Option<Choice> {
         match self.mode {
@@ -708,6 +787,20 @@ enum Action {
     Pick(PathBuf),
     Confirm,
     Cancel,
+}
+
+/// Lugares da barra lateral: Favoritos (pasta pessoal e as do usuário) e Locais.
+fn places_list(ui: &mut Ui, dir: &Path, action: &mut Option<Action>) {
+    ui.heading(&tr("Favorites"));
+    for (label, icon, place) in places() {
+        if label == "Computer" {
+            ui.heading(&tr("Locations"));
+        }
+        let current = place == dir;
+        if ui.list_row(icon, &tr(label), &[], current).clicked() && !current {
+            *action = Some(Action::Go(place));
+        }
+    }
 }
 
 /// Itens da pasta: pastas primeiro, depois arquivos, por nome (sem diferenciar
